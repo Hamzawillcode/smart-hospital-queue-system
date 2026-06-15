@@ -3,6 +3,7 @@ package com.hospital.patient.controller;
 import com.hospital.patient.dto.CheckInRequest;
 import com.hospital.patient.dto.PatientResponse;
 import com.hospital.patient.model.Patient;
+import com.hospital.patient.model.PatientStatus;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,7 +29,7 @@ public class PatientController {
         patient.setName(request.getName());
         patient.setPhone(request.getPhone());
         patient.setDepartment(request.getDepartment());
-        patient.setStatus("CHECKED_IN");
+        patient.setStatus(PatientStatus.CHECKED_IN);
         patient.setCheckinTime(LocalDateTime.now());
 
         patientStore.add(patient);
