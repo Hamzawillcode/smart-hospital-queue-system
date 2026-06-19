@@ -1,5 +1,7 @@
 package com.hospital.patient.exception;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,63 +12,60 @@ import java.time.LocalDateTime;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // Handles PatientNotFoundException → 404
+    private static final Logger log =
+            LogManager.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(PatientNotFoundException.class)
     public ResponseEntity<ErrorResponse> handlePatientNotFound(
             PatientNotFoundException ex) {
-
-        ErrorResponse error = new ErrorResponse(
-                404,
-                ex.getMessage(),
-                LocalDateTime.now()
-        );
-        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+        log.warn("PatientNotFoundException: {}", ex.getMessage());
+        return new ResponseEntity<>(
+                new ErrorResponse(404, ex.getMessage(),
+                        LocalDateTime.now()),
+                HttpStatus.NOT_FOUND);
     }
 
-    // Handles DepartmentNotFoundException → 404
     @ExceptionHandler(DepartmentNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleDepartmentNotFound(
+    public ResponseEntity<ErrorResponse> handleDeptNotFound(
             DepartmentNotFoundException ex) {
-
-        ErrorResponse error = new ErrorResponse(
-                404,
-                ex.getMessage(),
-                LocalDateTime.now()
-        );
-        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+        log.warn("DepartmentNotFoundException: {}",
+                ex.getMessage());
+        return new ResponseEntity<>(
+                new ErrorResponse(404, ex.getMessage(),
+                        LocalDateTime.now()),
+                HttpStatus.NOT_FOUND);
     }
 
-    // Handles @Valid validation failures → 400
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse> handleValidationFailed(
+    public ResponseEntity<ErrorResponse> handleValidation(
             MethodArgumentNotValidException ex) {
-
         String message = ex.getBindingResult()
                 .getFieldErrors()
                 .stream()
-                .map(err -> err.getField() + ": " + err.getDefaultMessage())
+                .map(err -> err.getField()
+                        + ": "
+                        + err.getDefaultMessage())
                 .findFirst()
                 .orElse("Validation failed");
 
-        ErrorResponse error = new ErrorResponse(
-                400,
-                message,
-                LocalDateTime.now()
-        );
-        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+        log.warn("Validation failed: {}", message);
+        return new ResponseEntity<>(
+                new ErrorResponse(400, message,
+                        LocalDateTime.now()),
+                HttpStatus.BAD_REQUEST);
     }
 
-    // Catches everything else → 500
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleGenericException(
+    public ResponseEntity<ErrorResponse> handleGeneric(
             Exception ex) {
-
-        ErrorResponse error = new ErrorResponse(
-                500,
-                "Something went wrong: " + ex.getMessage(),
-                LocalDateTime.now()
-        );
-        return new ResponseEntity<>(error,
+        // ERROR level — unexpected crash
+        log.error("Unexpected error occurred: {}",
+                ex.getMessage(), ex);
+        return new ResponseEntity<>(
+                new ErrorResponse(500,
+                        "Something went wrong: "
+                                + ex.getMessage(),
+                        LocalDateTime.now()),
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }

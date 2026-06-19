@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+
+    <Properties>
+        <!-- Log file location -->
+        <Property name="LOG_PATH">logs</Property>
+        <Property name="LOG_FILE">patient-service</Property>
+
+        <!-- Log format pattern -->
+        <Property name="PATTERN">
+            %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n
+        </Property>
+    </Properties>
+
+    <Appenders>
+
+        <!-- Console output -->
+        <Console name="ConsoleAppender" target="SYSTEM_OUT">
+            <PatternLayout pattern="${PATTERN}"/>
+        </Console>
+
+        <!-- Rolling file output -->
+        <RollingFile name="FileAppender"
+                     fileName="${LOG_PATH}/${LOG_FILE}.log"
+                     filePattern="${LOG_PATH}/${LOG_FILE}-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <!-- New file every day -->
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <!-- New file every 10MB -->
+                <SizeBasedTriggeringPolicy size="10MB"/>
+            </Policies>
+            <!-- Keep last 30 days of logs -->
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+    </Appenders>
+
+    <Loggers>
+
+        <!-- Your application logs → DEBUG level -->
+        <Logger name="com.hospital.patient"
+                level="DEBUG"
+                additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="FileAppender"/>
+        </Logger>
+
+        <!-- Spring framework logs → INFO level -->
+        <Logger name="org.springframework"
+                level="INFO"
+                additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+        </Logger>
+
+        <!-- Hibernate SQL logs → DEBUG level -->
+        <Logger name="org.hibernate.SQL"
+                level="DEBUG"
+                additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+        </Logger>
+
+        <!-- Root logger → INFO level -->
+        <Root level="INFO">
+            <AppenderRef ref="ConsoleAppender"/>
+        </Root>
+
+    </Loggers>
+
+</Configuration>

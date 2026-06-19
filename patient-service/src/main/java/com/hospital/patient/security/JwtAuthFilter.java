@@ -4,18 +4,25 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.security.authentication
+        .UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context
+        .SecurityContextHolder;
+import org.springframework.security.web.authentication
+        .WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-
 import java.io.IOException;
 import java.util.ArrayList;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
+
+    private static final Logger log =
+            LogManager.getLogger(JwtAuthFilter.class);
 
     @Autowired
     private JwtUtil jwtUtil;
@@ -27,51 +34,43 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             FilterChain filterChain)
             throws ServletException, IOException {
 
-        // 1. Get Authorization header
         String authHeader = request.getHeader("Authorization");
-
         String token = null;
         String username = null;
 
-        // 2. Check header format: "Bearer <token>"
         if (authHeader != null
                 && authHeader.startsWith("Bearer ")) {
-            token = authHeader.substring(7); // remove "Bearer "
+            token = authHeader.substring(7);
             try {
                 username = jwtUtil.extractUsername(token);
+                log.debug("JWT token extracted for user: {}",
+                        username);
             } catch (Exception e) {
-                // Invalid token — log and continue
-                // SecurityContext stays empty → 401 returned
-                logger.warn("JWT token invalid: "
-                        + e.getMessage());
+                log.warn("Invalid JWT token: {}", e.getMessage());
             }
         }
 
-        // 3. If valid token and not already authenticated
         if (username != null
                 && SecurityContextHolder.getContext()
                 .getAuthentication() == null) {
 
             if (jwtUtil.validateToken(token, username)) {
-                // 4. Create authentication object
                 UsernamePasswordAuthenticationToken authToken =
                         new UsernamePasswordAuthenticationToken(
-                                username,
-                                null,
-                                new ArrayList<>() // no roles yet
-                        );
+                                username, null, new ArrayList<>());
                 authToken.setDetails(
                         new WebAuthenticationDetailsSource()
                                 .buildDetails(request));
-
-                // 5. Set in SecurityContext
-                // From this point, request is "authenticated"
                 SecurityContextHolder.getContext()
                         .setAuthentication(authToken);
+                log.debug("User authenticated successfully: {}",
+                        username);
+            } else {
+                log.warn("JWT validation failed for user: {}",
+                        username);
             }
         }
 
-        // 6. Continue to next filter or controller
         filterChain.doFilter(request, response);
     }
 }
