@@ -1,0 +1,8 @@
+2026-06-24 00:33:08.566 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - Starting DoctorServiceApplication using Java 21.0.10 with PID 31021 (/Users/hamzarouf/hospital_queue_system/doctor-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/doctor-service)
+2026-06-24 00:33:08.569 [restartedMain] DEBUG
+            com.hospital.doctor.DoctorServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-24 00:33:08.569 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-24 00:33:09.879 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - Started DoctorServiceApplication in 1.402 seconds (process running for 1.759)

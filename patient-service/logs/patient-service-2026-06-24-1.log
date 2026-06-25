@@ -1,0 +1,8 @@
+2026-06-24 00:36:26.200 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 31196 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-06-24 00:36:26.202 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-24 00:36:26.202 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-24 00:36:26.661 [restartedMain] DEBUG com.hospital.patient.security.JwtAuthFilter - Filter 'jwtAuthFilter' configured for use
+2026-06-24 00:36:27.679 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Started PatientServiceApplication in 1.581 seconds (process running for 1.926)
+2026-06-24 00:36:57.946 [http-nio-8081-exec-2] WARN  com.hospital.patient.security.JwtAuthFilter - Invalid JWT token: JWT expired 252668945 milliseconds ago at 2026-06-20T20:55:49.000Z. Current time: 2026-06-23T19:06:57.945Z. Allowed clock skew: 0 milliseconds.
+2026-06-24 00:36:57.954 [http-nio-8081-exec-2] DEBUG com.hospital.patient.service.impl.PatientServiceImpl - Fetching all patients
+2026-06-24 00:36:58.018 [http-nio-8081-exec-2] INFO  com.hospital.patient.service.impl.PatientServiceImpl - Total patients fetched: 5

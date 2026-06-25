@@ -1,8 +1,36 @@
-2026-06-24 00:33:08.566 [restartedMain] INFO 
-            com.hospital.doctor.DoctorServiceApplication - Starting DoctorServiceApplication using Java 21.0.10 with PID 31021 (/Users/hamzarouf/hospital_queue_system/doctor-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/doctor-service)
-2026-06-24 00:33:08.569 [restartedMain] DEBUG
+2026-06-26 04:00:46.671 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - Starting DoctorServiceApplication using Java 21.0.10 with PID 46814 (/Users/hamzarouf/hospital_queue_system/doctor-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/doctor-service)
+2026-06-26 04:00:46.674 [restartedMain] DEBUG
             com.hospital.doctor.DoctorServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
-2026-06-24 00:33:08.569 [restartedMain] INFO 
+2026-06-26 04:00:46.674 [restartedMain] INFO 
             com.hospital.doctor.DoctorServiceApplication - No active profile set, falling back to 1 default profile: "default"
-2026-06-24 00:33:09.879 [restartedMain] INFO 
-            com.hospital.doctor.DoctorServiceApplication - Started DoctorServiceApplication in 1.402 seconds (process running for 1.759)
+2026-06-26 04:00:48.018 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - Started DoctorServiceApplication in 1.442 seconds (process running for 1.784)
+2026-06-26 04:04:28.016 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - Starting DoctorServiceApplication using Java 21.0.10 with PID 46898 (/Users/hamzarouf/hospital_queue_system/doctor-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/doctor-service)
+2026-06-26 04:04:28.017 [restartedMain] DEBUG
+            com.hospital.doctor.DoctorServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-26 04:04:28.017 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-26 04:04:29.322 [restartedMain] INFO 
+            com.hospital.doctor.DoctorServiceApplication - Started DoctorServiceApplication in 1.396 seconds (process running for 1.728)
+2026-06-26 04:06:02.713 [http-nio-8083-exec-1] DEBUG
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Fetching all doctors
+2026-06-26 04:06:02.787 [http-nio-8083-exec-1] INFO 
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Total doctors fetched: 17
+2026-06-26 04:06:55.963 [http-nio-8083-exec-3] DEBUG
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Fetching available doctors in dept: OPD
+2026-06-26 04:06:56.070 [http-nio-8083-exec-3] INFO 
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Found 8 available doctors in dept: OPD
+2026-06-26 04:06:56.079 [http-nio-8083-exec-4] DEBUG
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Fetching available doctors in dept: EMERGENCY
+2026-06-26 04:06:56.081 [http-nio-8083-exec-4] INFO 
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Found 4 available doctors in dept: EMERGENCY
+2026-06-26 04:06:56.083 [http-nio-8083-exec-5] DEBUG
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Fetching available doctors in dept: CARDIOLOGY
+2026-06-26 04:06:56.084 [http-nio-8083-exec-5] INFO 
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Found 4 available doctors in dept: CARDIOLOGY
+2026-06-26 04:07:59.033 [http-nio-8083-exec-8] DEBUG
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Fetching available doctors in dept: OPD
+2026-06-26 04:07:59.045 [http-nio-8083-exec-8] INFO 
+            com.hospital.doctor.service.impl.DoctorServiceImpl - Found 8 available doctors in dept: OPD
