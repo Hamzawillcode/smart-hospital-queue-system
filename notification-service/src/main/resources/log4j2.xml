@@ -2,7 +2,7 @@
 <Configuration status="WARN">
     <Properties>
         <Property name="LOG_PATH">logs</Property>
-        <Property name="LOG_FILE">monitor-service</Property>
+        <Property name="LOG_FILE">notification-service</Property>
         <Property name="PATTERN">
             %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level
             %logger{36} - %msg%n
@@ -26,7 +26,7 @@
     </Appenders>
 
     <Loggers>
-        <Logger name="com.hospital.monitor"
+        <Logger name="com.hospital.notification"
                 level="DEBUG" additivity="false">
             <AppenderRef ref="ConsoleAppender"/>
             <AppenderRef ref="FileAppender"/>

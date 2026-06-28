@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+    <title>Hospital Queue Status</title>
+
+    <!-- SockJS and STOMP libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f0f4f8;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .hospital-header {
+            color: #2563eb;
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .token-display {
+            background: #eff6ff;
+            border: 2px solid #2563eb;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .token-label {
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .token-number {
+            color: #1d4ed8;
+            font-size: 36px;
+            font-weight: bold;
+            margin: 8px 0;
+        }
+
+        .position-card {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 16px 0;
+        }
+
+        .position-number {
+            font-size: 72px;
+            font-weight: bold;
+            color: #1f2937;
+            line-height: 1;
+        }
+
+        .position-label {
+            color: #6b7280;
+            font-size: 16px;
+            margin-top: 8px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 16px 0;
+        }
+
+        .info-item {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .info-label {
+            color: #9ca3af;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .info-value {
+            color: #1f2937;
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 4px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+            margin: 12px 0;
+        }
+
+        .status-waiting {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status-next {
+            background: #d1fae5;
+            color: #065f46;
+            animation: pulse 1s infinite;
+        }
+
+        .status-assigned {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .message-box {
+            background: #eff6ff;
+            border-left: 4px solid #2563eb;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: left;
+            font-size: 16px;
+            color: #1e40af;
+        }
+
+        .next-alert {
+            background: #d1fae5;
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            display: none;
+        }
+
+        .next-alert.visible {
+            display: block;
+            animation: pulse 1s infinite;
+        }
+
+        .next-alert h2 {
+            color: #065f46;
+            font-size: 24px;
+        }
+
+        .next-alert p {
+            color: #047857;
+            margin-top: 8px;
+        }
+
+        .connection-status {
+            font-size: 12px;
+            padding: 4px 12px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            display: inline-block;
+        }
+
+        .connected {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .disconnected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .connecting {
+            background: #fef3c7;
+            color: #92400e;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <!-- Header -->
+    <div class="hospital-header">🏥 Smart Hospital</div>
+    <p style="color: #6b7280; margin-bottom: 16px;">
+        Real-Time Queue Status
+    </p>
+
+    <!-- Connection Status -->
+    <div id="connectionStatus"
+         class="connection-status connecting">
+        Connecting...
+    </div>
+
+    <!-- Token Display -->
+    <div class="token-display">
+        <div class="token-label">Your Token Number</div>
+        <div class="token-number"
+             th:text="${tokenNumber}">OPD-1</div>
+    </div>
+
+    <!-- YOU'RE NEXT Alert (hidden until position = 1) -->
+    <div class="next-alert" id="nextAlert">
+        <h2>🔔 You're Next!</h2>
+        <p id="roomInfo">Please proceed to your room</p>
+        <p id="doctorInfo">Your doctor is ready</p>
+    </div>
+
+    <!-- Position Card -->
+    <div class="position-card">
+        <div class="position-number" id="position">-</div>
+        <div class="position-label">Your Position</div>
+    </div>
+
+    <!-- Info Grid -->
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="info-label">Patients Ahead</div>
+            <div class="info-value" id="ahead">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Est. Wait</div>
+            <div class="info-value" id="wait">- mins</div>
+        </div>
+    </div>
+
+    <!-- Status Badge -->
+    <div id="statusBadge" class="status-badge status-waiting">
+        WAITING
+    </div>
+
+    <!-- Message -->
+    <div class="message-box" id="messageBox">
+        Waiting for updates...
+    </div>
+
+    <!-- Department -->
+    <p style="color: #9ca3af; font-size: 14px; margin-top: 16px;">
+        Department: <strong id="department">-</strong>
+    </p>
+
+</div>
+
+<script th:inline="javascript">
+    // Token from server (Thymeleaf injects this)
+    const tokenNumber = [[${tokenNumber}]];
+    const wsUrl = [[${wsUrl}]];
+
+    let stompClient = null;
+
+    // ─────────────────────────────────────────
+    // CONNECT TO WEBSOCKET
+    // ─────────────────────────────────────────
+    function connect() {
+        updateConnectionStatus('connecting');
+
+        // Create SockJS connection
+        const socket = new SockJS(wsUrl);
+        stompClient = Stomp.over(socket);
+
+        // Disable STOMP debug logs in console
+        stompClient.debug = null;
+
+        stompClient.connect({}, function(frame) {
+            console.log('Connected to WebSocket');
+            updateConnectionStatus('connected');
+
+            // Subscribe to THIS patient's topic
+            stompClient.subscribe(
+                '/topic/patient/' + tokenNumber,
+                function(message) {
+                    const notification = JSON.parse(
+                        message.body);
+                    console.log('Notification received:',
+                        notification);
+                    updateUI(notification);
+                }
+            );
+
+            // Also subscribe to department updates
+            stompClient.subscribe(
+                '/topic/department/' + tokenNumber.split('-')[0],
+                function(message) {
+                    console.log('Department update received');
+                }
+            );
+
+        }, function(error) {
+            console.log('WebSocket error:', error);
+            updateConnectionStatus('disconnected');
+
+            // Auto-reconnect after 5 seconds
+            setTimeout(connect, 5000);
+        });
+    }
+
+    // ─────────────────────────────────────────
+    // UPDATE UI BASED ON NOTIFICATION
+    // ─────────────────────────────────────────
+    function updateUI(notification) {
+        // Update position
+        document.getElementById('position').textContent =
+            notification.position || '-';
+
+        // Update patients ahead
+        document.getElementById('ahead').textContent =
+            notification.patientsAhead >= 0
+                ? notification.patientsAhead
+                : '-';
+
+        // Update estimated wait
+        document.getElementById('wait').textContent =
+            (notification.estimatedWaitMinutes || 0) + ' mins';
+
+        // Update message
+        document.getElementById('messageBox').textContent =
+            notification.message || 'Waiting for updates...';
+
+        // Update department
+        if (notification.departmentId) {
+            document.getElementById('department').textContent =
+                notification.departmentId;
+        }
+
+        // Update status badge
+        updateStatusBadge(notification.status,
+            notification.position);
+
+        // Show YOU'RE NEXT alert
+        if (notification.position === 1 ||
+            notification.status === 'ASSIGNED') {
+            showNextAlert(notification);
+        } else {
+            hideNextAlert();
+        }
+
+        // 5-position warning — change background
+        if (notification.position === 5) {
+            document.querySelector('.position-card')
+                .style.background = '#fef3c7';
+            document.querySelector('.position-number')
+                .style.color = '#92400e';
+        }
+    }
+
+    function updateStatusBadge(status, position) {
+        const badge = document.getElementById('statusBadge');
+        badge.className = 'status-badge';
+
+        if (position === 1 || status === 'ASSIGNED') {
+            badge.classList.add('status-next');
+            badge.textContent = "🔔 YOU'RE NEXT!";
+        } else if (status === 'WAITING') {
+            badge.classList.add('status-waiting');
+            badge.textContent = 'WAITING';
+        } else {
+            badge.classList.add('status-assigned');
+            badge.textContent = status || 'WAITING';
+        }
+    }
+
+    function showNextAlert(notification) {
+        const alert = document.getElementById('nextAlert');
+        alert.classList.add('visible');
+
+        if (notification.roomNumber) {
+            document.getElementById('roomInfo').textContent =
+                '📍 Please proceed to Room: '
+                + notification.roomNumber;
+        }
+
+        if (notification.doctorName) {
+            document.getElementById('doctorInfo').textContent =
+                '👨‍⚕️ ' + notification.doctorName
+                + ' is ready for you';
+        }
+
+        // Play notification sound (browser permitting)
+        try {
+            const audio = new Audio(
+                'data:audio/wav;base64,UklGRl9v...');
+            audio.play().catch(() => {});
+        } catch(e) {}
+    }
+
+    function hideNextAlert() {
+        document.getElementById('nextAlert')
+            .classList.remove('visible');
+    }
+
+    function updateConnectionStatus(status) {
+        const el = document.getElementById(
+            'connectionStatus');
+        el.className = 'connection-status ' + status;
+
+        if (status === 'connected') {
+            el.textContent = '🟢 Connected — Live Updates Active';
+        } else if (status === 'disconnected') {
+            el.textContent = '🔴 Disconnected — Reconnecting...';
+        } else {
+            el.textContent = '🟡 Connecting...';
+        }
+    }
+
+    // Start connection when page loads
+    connect();
+</script>
+
+</body>
+</html>
