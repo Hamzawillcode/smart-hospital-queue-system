@@ -14,6 +14,7 @@ import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -61,7 +62,7 @@ public class QueueServiceImpl implements QueueService {
     // ADD TO QUEUE
     // ─────────────────────────────────────────
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public QueueEntryResponse addToQueue(
             AddToQueueRequest request) {
 
@@ -176,7 +177,7 @@ public class QueueServiceImpl implements QueueService {
     // CALL NEXT PATIENT
     // ─────────────────────────────────────────
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
     public QueueEntryResponse callNextPatient(
             String departmentId) {
 
@@ -255,7 +256,7 @@ public class QueueServiceImpl implements QueueService {
     // MARK CONSULTATION DONE
     // ─────────────────────────────────────────
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public QueueEntryResponse markDone(String patientId,
                                        String departmentId) {
 
