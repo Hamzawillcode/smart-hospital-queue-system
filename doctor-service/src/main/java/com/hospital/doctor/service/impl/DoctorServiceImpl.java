@@ -12,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -113,20 +114,32 @@ public class DoctorServiceImpl implements DoctorService {
     // FIND FIRST AVAILABLE
     // ─────────────────────────────────────────
     @Override
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public DoctorResponse findFirstAvailable(String deptId) {
-        log.info("Finding first available doctor in dept: {}",
+
+        log.info("Finding first available doctor in: {}",
                 deptId);
+
+        // Lock the available doctor row
+        // No other thread can assign this same doctor
+        // until this transaction commits
         Doctor doctor = doctorRepository
-                .findFirstByDepartmentIdAndStatus(
-                        deptId, DoctorStatus.AVAILABLE)
+                .findFirstAvailableWithLock(deptId)
                 .orElseThrow(() -> {
-                    log.warn("No available doctor in dept: {}",
+                    log.warn("No available doctor in: {}",
                             deptId);
                     return new NoDoctorAvailableException(deptId);
                 });
-        log.info("Found available doctor: {} in dept: {}",
-                doctor.getName(), deptId);
-        return mapToResponse(doctor);
+
+        // Immediately mark as BUSY within same transaction
+        // Lock held until commit — no race condition
+        doctor.setStatus(DoctorStatus.BUSY);
+        Doctor updated = doctorRepository.save(doctor);
+
+        log.info("Doctor: {} assigned atomically in dept: {}",
+                updated.getName(), deptId);
+
+        return mapToResponse(updated);
     }
 
     // ─────────────────────────────────────────
