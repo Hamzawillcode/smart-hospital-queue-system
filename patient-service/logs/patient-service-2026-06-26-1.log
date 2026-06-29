@@ -1,0 +1,13 @@
+2026-06-26 04:00:33.204 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 46655 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-06-26 04:00:33.206 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-26 04:00:33.206 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-26 04:00:33.647 [restartedMain] DEBUG com.hospital.patient.security.JwtAuthFilter - Filter 'jwtAuthFilter' configured for use
+2026-06-26 04:00:34.703 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Started PatientServiceApplication in 1.603 seconds (process running for 1.96)
+2026-06-26 04:04:13.961 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 46888 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-06-26 04:04:13.962 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-26 04:04:13.962 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-26 04:04:14.409 [restartedMain] DEBUG com.hospital.patient.security.JwtAuthFilter - Filter 'jwtAuthFilter' configured for use
+2026-06-26 04:04:15.458 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Started PatientServiceApplication in 1.587 seconds (process running for 1.983)
+2026-06-26 04:05:16.629 [http-nio-8081-exec-2] WARN  com.hospital.patient.security.JwtAuthFilter - Invalid JWT token: JWT expired 437967627 milliseconds ago at 2026-06-20T20:55:49.000Z. Current time: 2026-06-25T22:35:16.627Z. Allowed clock skew: 0 milliseconds.
+2026-06-26 04:05:16.637 [http-nio-8081-exec-2] DEBUG com.hospital.patient.service.impl.PatientServiceImpl - Fetching all patients
+2026-06-26 04:05:16.701 [http-nio-8081-exec-2] INFO  com.hospital.patient.service.impl.PatientServiceImpl - Total patients fetched: 5

@@ -10,10 +10,15 @@ import com.hospital.patient.model.PatientStatus;
 import com.hospital.patient.repository.DepartmentRepository;
 import com.hospital.patient.repository.PatientRepository;
 import com.hospital.patient.service.PatientService;
+import jakarta.persistence.OptimisticLockException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -33,15 +38,25 @@ public class PatientServiceImpl implements PatientService {
     private DepartmentRepository departmentRepository;
 
     @Override
-    @Transactional
+    @Retryable(
+            retryFor = {
+                    OptimisticLockException.class,
+                    ObjectOptimisticLockingFailureException.class
+            },
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 100)
+    )
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public PatientResponse checkIn(CheckInRequest request) {
-        log.info("Check-in request received for patient: {} " +
-                        "in department: {}",
+
+        log.info("Check-in request received for: {} dept: {}",
                 request.getName(), request.getDepartment());
 
-        // Validate department
+        // PESSIMISTIC LOCK on department row
+        // Thread 1 locks OPD → Thread 2 waits
+        // Thread 1 commits → Thread 2 proceeds with updated count
         Department department = departmentRepository
-                .findById(request.getDepartment())
+                .findByIdWithLock(request.getDepartment())
                 .orElseThrow(() -> {
                     log.warn("Department not found: {}",
                             request.getDepartment());
@@ -49,8 +64,7 @@ public class PatientServiceImpl implements PatientService {
                             request.getDepartment());
                 });
 
-        log.debug("Department validated: {}",
-                department.getName());
+        log.debug("Department locked: {}", department.getName());
 
         // Build patient
         Patient patient = new Patient();
@@ -60,30 +74,24 @@ public class PatientServiceImpl implements PatientService {
         patient.setStatus(PatientStatus.CHECKED_IN);
         patient.setCheckinTime(LocalDateTime.now());
 
-        // TODO: Race condition here — fix Day 12
-        // TODO: Token resets daily — fix Day 12
-        // TODO: Token generation moves to queue-service Day 20
-        long count = patientRepository.countByDepartmentAndStatus(
-                request.getDepartment(), PatientStatus.CHECKED_IN);
-        String token = request.getDepartment() + "-" + (count + 1);
+        // Token generation is now ATOMIC:
+        // currentQueueSize is incremented under the lock
+        // No two threads can get the same count
+        int newSize = department.getCurrentQueueSize() + 1;
+        String token = request.getDepartment() + "-" + newSize;
         patient.setTokenNumber(token);
+        department.setCurrentQueueSize(newSize);
 
-        log.debug("Generated token: {} for patient: {}",
-                token, request.getName());
+        log.debug("Token generated: {} under pessimistic lock",
+                token);
 
-        // Save patient
+        // Save patient and department in same transaction
         Patient saved = patientRepository.save(patient);
-
-        // Update department queue size
-        department.setCurrentQueueSize(
-                department.getCurrentQueueSize() + 1);
         departmentRepository.save(department);
 
-        log.info("Patient checked in successfully. " +
-                        "ID: {}, Token: {}, Department: {}",
-                saved.getId(),
-                saved.getTokenNumber(),
-                saved.getDepartment());
+        // Lock released here when @Transactional commits
+        log.info("Check-in complete. Token: {} Patient: {}",
+                token, saved.getId());
 
         return mapToResponse(saved);
     }

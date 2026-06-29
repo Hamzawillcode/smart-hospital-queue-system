@@ -40,7 +40,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Auth endpoint — completely public
                         .requestMatchers("/auth/**").permitAll()
-
+                        // ALLOW PATIENT CHECK-IN WITHOUT JWT (Added lines here)
+                        .requestMatchers("/patients/checkin", "/patients/check-in").permitAll()
                         // Patient checking own status — public
                         .requestMatchers(HttpMethod.GET,
                                 "/patients/{id}").permitAll()
