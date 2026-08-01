@@ -1,5 +1,8 @@
 package com.hospital.queue.service.impl;
 
+import com.hospital.queue.client.DoctorServiceClient;
+import com.hospital.queue.client.MonitorClient;
+import com.hospital.queue.client.NotificationClient;
 import com.hospital.queue.dto.*;
 import com.hospital.queue.exception.PatientAlreadyInQueueException;
 import com.hospital.queue.exception.QueueEntryNotFoundException;
@@ -13,9 +16,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
-
+import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -32,29 +34,34 @@ public class QueueServiceImpl implements QueueService {
     @Autowired
     private QueueManager queueManager;
 
+    @Autowired
+    private DoctorServiceClient doctorClient;
+
+    @Autowired
+    private NotificationClient notificationClient;
+
+    @Autowired
+    private MonitorClient monitorClient;
+
     // ─────────────────────────────────────────
-    // LOAD QUEUE FROM DB ON STARTUP
+    // LOAD FROM DB ON STARTUP
     // ─────────────────────────────────────────
     @PostConstruct
     public void initializeQueues() {
-        log.info("Initializing in-memory queues from DB...");
-
-        // Load all WAITING entries from DB into memory
-        List<QueueEntry> waitingEntries = queueRepository
-                .findAll()
+        log.info("Initializing queues from DB...");
+        List<QueueEntry> waiting = queueRepository.findAll()
                 .stream()
-                .filter(e -> e.getStatus() == QueueStatus.WAITING)
+                .filter(e -> e.getStatus()
+                        == QueueStatus.WAITING)
                 .collect(Collectors.toList());
 
-        // Group by department and load into QueueManager
-        Map<String, List<QueueEntry>> byDept = waitingEntries
+        Map<String, List<QueueEntry>> byDept = waiting
                 .stream()
                 .collect(Collectors.groupingBy(
                         QueueEntry::getDepartmentId));
 
         byDept.forEach(queueManager::loadQueue);
-
-        log.info("Queues initialized. Departments loaded: {}",
+        log.info("Queues initialized: {}",
                 byDept.keySet());
     }
 
@@ -66,24 +73,24 @@ public class QueueServiceImpl implements QueueService {
     public QueueEntryResponse addToQueue(
             AddToQueueRequest request) {
 
-        log.info("Adding patient: {} to dept: {} queue",
+        log.info("Adding: {} to {} queue",
                 request.getPatientName(),
                 request.getDepartmentId());
 
-        // Check if patient already in queue
+        // Check duplicate
         Optional<QueueEntry> existing = queueRepository
                 .findByPatientIdAndStatus(
                         request.getPatientId(),
                         QueueStatus.WAITING);
 
         if (existing.isPresent()) {
-            log.warn("Patient: {} already in queue",
+            log.warn("Patient already in queue: {}",
                     request.getPatientId());
             throw new PatientAlreadyInQueueException(
                     request.getPatientId());
         }
 
-        // Build queue entry
+        // Build entry
         QueueEntry entry = new QueueEntry();
         entry.setPatientId(request.getPatientId());
         entry.setPatientName(request.getPatientName());
@@ -91,7 +98,7 @@ public class QueueServiceImpl implements QueueService {
         entry.setTokenNumber(request.getTokenNumber());
         entry.setStatus(QueueStatus.WAITING);
         entry.setJoinedAt(LocalDateTime.now());
-        entry.setPosition(0); // temp — set by QueueManager
+        entry.setPosition(0);
 
         // Add to in-memory queue (thread-safe)
         int position = queueManager.addToQueue(entry);
@@ -100,77 +107,37 @@ public class QueueServiceImpl implements QueueService {
         // Save to DB
         QueueEntry saved = queueRepository.save(entry);
 
-        log.info("Patient: {} added at position: {}",
-                request.getPatientName(), position);
+        log.info("Patient {} at position {} in {}",
+                request.getPatientName(),
+                position,
+                request.getDepartmentId());
+
+        // Notify patient of their position
+        notificationClient.sendPositionUpdate(
+                request.getTokenNumber(),
+                request.getPatientName(),
+                request.getDepartmentId(),
+                position,
+                queueManager.getQueueSize(
+                        request.getDepartmentId())
+        );
+
+        // Log to monitor
+        monitorClient.logEvent(
+                "QUEUE_UPDATED",
+                request.getPatientId(),
+                request.getDepartmentId(),
+                request.getPatientName()
+                        + " added to queue at position "
+                        + position
+        );
+
+        // If position is 1 — try to assign doctor now
+        if (position == 1) {
+            tryAssignDoctor(saved);
+        }
 
         return mapToResponse(saved);
-    }
-
-    // ─────────────────────────────────────────
-    // GET QUEUE STATUS FOR A DEPARTMENT
-    // ─────────────────────────────────────────
-    @Override
-    public QueueStatusResponse getQueueStatus(
-            String departmentId) {
-
-        log.debug("Getting queue status for dept: {}",
-                departmentId);
-
-        List<QueueEntry> snapshot = queueManager
-                .getQueueSnapshot(departmentId);
-
-        long totalWaiting = snapshot.stream()
-                .filter(e -> e.getStatus()
-                        == QueueStatus.WAITING)
-                .count();
-
-        long totalAssigned = queueRepository
-                .countByDepartmentIdAndStatus(
-                        departmentId, QueueStatus.ASSIGNED);
-
-        List<QueueEntryResponse> queueResponses = snapshot
-                .stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
-
-        return new QueueStatusResponse(
-                departmentId,
-                (int) totalWaiting,
-                (int) totalAssigned,
-                queueResponses);
-    }
-
-    // ─────────────────────────────────────────
-    // GET PATIENT'S QUEUE INFO
-    // ─────────────────────────────────────────
-    @Override
-    public QueueEntryResponse getPatientQueueInfo(
-            String patientId, String departmentId) {
-
-        log.debug("Getting queue info for patient: {}",
-                patientId);
-
-        // Check in-memory queue first
-        Optional<Integer> position = queueManager
-                .getPatientPosition(patientId, departmentId);
-
-        // Find from DB
-        QueueEntry entry = queueRepository
-                .findByPatientId(patientId)
-                .stream()
-                .filter(e -> e.getStatus()
-                        == QueueStatus.WAITING
-                        || e.getStatus()
-                        == QueueStatus.ASSIGNED)
-                .findFirst()
-                .orElseThrow(() ->
-                        new QueueEntryNotFoundException(
-                                patientId));
-
-        // Update position from in-memory state
-        position.ifPresent(entry::setPosition);
-
-        return mapToResponse(entry);
     }
 
     // ─────────────────────────────────────────
@@ -184,13 +151,13 @@ public class QueueServiceImpl implements QueueService {
         log.info("Calling next patient for dept: {}",
                 departmentId);
 
-        // Get next from in-memory queue
-        Optional<QueueEntry> nextOpt = queueManager
-                .removeNext(departmentId);
+        Optional<QueueEntry> nextOpt =
+                queueManager.removeNext(departmentId);
 
         if (nextOpt.isEmpty()) {
             throw new QueueEntryNotFoundException(
-                    "No patients waiting in: " + departmentId);
+                    "No patients waiting in: "
+                            + departmentId);
         }
 
         QueueEntry next = nextOpt.get();
@@ -206,17 +173,84 @@ public class QueueServiceImpl implements QueueService {
         dbEntry.setAssignedAt(LocalDateTime.now());
         QueueEntry updated = queueRepository.save(dbEntry);
 
-        // Update positions in DB for remaining patients
+        // Sync positions to DB
         syncPositionsToDB(departmentId);
 
-        log.info("Next patient called: {} for dept: {}",
+        // Notify all remaining patients their position updated
+        notifyAllPatientsInDept(departmentId);
+
+        // Try to assign a doctor
+        tryAssignDoctor(updated);
+
+        log.info("Next patient called: {} dept: {}",
                 next.getPatientName(), departmentId);
 
         return mapToResponse(updated);
     }
 
     // ─────────────────────────────────────────
-    // ASSIGN DOCTOR TO PATIENT
+    // GET QUEUE STATUS
+    // ─────────────────────────────────────────
+    @Override
+    public QueueStatusResponse getQueueStatus(
+            String departmentId) {
+
+        log.debug("Getting queue status for: {}",
+                departmentId);
+
+        List<QueueEntry> snapshot =
+                queueManager.getQueueSnapshot(departmentId);
+
+        long totalWaiting = snapshot.stream()
+                .filter(e -> e.getStatus()
+                        == QueueStatus.WAITING)
+                .count();
+
+        long totalAssigned = queueRepository
+                .countByDepartmentIdAndStatus(
+                        departmentId, QueueStatus.ASSIGNED);
+
+        List<QueueEntryResponse> responses = snapshot
+                .stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+
+        return new QueueStatusResponse(
+                departmentId,
+                (int) totalWaiting,
+                (int) totalAssigned,
+                responses);
+    }
+
+    // ─────────────────────────────────────────
+    // GET PATIENT QUEUE INFO
+    // ─────────────────────────────────────────
+    @Override
+    public QueueEntryResponse getPatientQueueInfo(
+            String patientId, String departmentId) {
+
+        Optional<Integer> position =
+                queueManager.getPatientPosition(
+                        patientId, departmentId);
+
+        QueueEntry entry = queueRepository
+                .findByPatientId(patientId)
+                .stream()
+                .filter(e -> e.getStatus()
+                        == QueueStatus.WAITING
+                        || e.getStatus()
+                        == QueueStatus.ASSIGNED)
+                .findFirst()
+                .orElseThrow(() ->
+                        new QueueEntryNotFoundException(
+                                patientId));
+
+        position.ifPresent(entry::setPosition);
+        return mapToResponse(entry);
+    }
+
+    // ─────────────────────────────────────────
+    // ASSIGN DOCTOR
     // ─────────────────────────────────────────
     @Override
     @Transactional
@@ -244,23 +278,36 @@ public class QueueServiceImpl implements QueueService {
 
         QueueEntry updated = queueRepository.save(entry);
 
-        log.info("Doctor: {} assigned to patient: {}. " +
-                        "Room: {}",
-                request.getDoctorName(), patientId,
-                request.getRoomNumber());
+        // Notify patient with doctor and room info
+        notificationClient.notifyPatientNext(
+                entry.getTokenNumber(),
+                request.getRoomNumber(),
+                request.getDoctorName(),
+                entry.getDepartmentId()
+        );
+
+        monitorClient.logEvent(
+                "DOCTOR_ASSIGNED",
+                patientId,
+                entry.getDepartmentId(),
+                "Dr. " + request.getDoctorName()
+                        + " assigned to patient "
+                        + patientId
+                        + " in room " + request.getRoomNumber()
+        );
 
         return mapToResponse(updated);
     }
 
     // ─────────────────────────────────────────
-    // MARK CONSULTATION DONE
+    // MARK DONE
     // ─────────────────────────────────────────
     @Override
-    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Transactional
     public QueueEntryResponse markDone(String patientId,
                                        String departmentId) {
 
-        log.info("Marking done for patient: {} in dept: {}",
+        log.info("Marking done: patient: {} dept: {}",
                 patientId, departmentId);
 
         QueueEntry entry = queueRepository
@@ -273,32 +320,39 @@ public class QueueServiceImpl implements QueueService {
                         new QueueEntryNotFoundException(
                                 patientId));
 
+        // Free the doctor
+        if (entry.getAssignedDoctorId() != null) {
+            doctorClient.freeDoctor(
+                    entry.getAssignedDoctorId());
+        }
+
         entry.setStatus(QueueStatus.DONE);
         QueueEntry updated = queueRepository.save(entry);
 
-        log.info("Consultation done for patient: {}",
-                patientId);
+        monitorClient.logEvent(
+                "CONSULTATION_DONE",
+                patientId,
+                departmentId,
+                "Consultation completed for patient: "
+                        + patientId
+        );
 
+        log.info("Consultation done for: {}", patientId);
         return mapToResponse(updated);
     }
 
     // ─────────────────────────────────────────
-    // REMOVE FROM QUEUE (patient leaves)
+    // REMOVE FROM QUEUE
     // ─────────────────────────────────────────
     @Override
     @Transactional
     public boolean removeFromQueue(String patientId,
                                    String departmentId) {
 
-        log.info("Removing patient: {} from dept: {} queue",
-                patientId, departmentId);
-
-        // Remove from in-memory
         boolean removed = queueManager
                 .removePatient(patientId, departmentId);
 
         if (removed) {
-            // Update DB
             queueRepository.findByPatientId(patientId)
                     .stream()
                     .filter(e -> e.getStatus()
@@ -309,8 +363,8 @@ public class QueueServiceImpl implements QueueService {
                         queueRepository.save(e);
                     });
 
-            // Sync positions to DB
             syncPositionsToDB(departmentId);
+            notifyAllPatientsInDept(departmentId);
         }
 
         return removed;
@@ -321,19 +375,12 @@ public class QueueServiceImpl implements QueueService {
     // ─────────────────────────────────────────
     @Override
     public List<QueueStatusResponse> getAllQueues() {
-        log.debug("Getting all queue statuses");
-
-        // Get distinct departments from DB
-        List<String> departments = queueRepository
-                .findAll()
+        return queueRepository.findAll()
                 .stream()
                 .filter(e -> e.getStatus()
                         == QueueStatus.WAITING)
                 .map(QueueEntry::getDepartmentId)
                 .distinct()
-                .collect(Collectors.toList());
-
-        return departments.stream()
                 .map(this::getQueueStatus)
                 .collect(Collectors.toList());
     }
@@ -342,29 +389,81 @@ public class QueueServiceImpl implements QueueService {
     // PRIVATE HELPERS
     // ─────────────────────────────────────────
 
-    // Sync in-memory positions back to DB
-    private void syncPositionsToDB(String departmentId) {
-        List<QueueEntry> snapshot = queueManager
-                .getQueueSnapshot(departmentId);
+    // Try to find and assign doctor to patient
+    private void tryAssignDoctor(QueueEntry entry) {
+        try {
+            log.info("Trying to assign doctor for: {}",
+                    entry.getPatientId());
 
-        snapshot.forEach(entry -> {
-            queueRepository.findById(entry.getQueueId())
-                    .ifPresent(dbEntry -> {
-                        dbEntry.setPosition(entry.getPosition());
-                        queueRepository.save(dbEntry);
-                    });
-        });
+            Map doctor = doctorClient
+                    .findAndAssignDoctor(
+                            entry.getDepartmentId());
 
-        log.debug("Positions synced to DB for dept: {}",
-                departmentId);
+            if (doctor != null) {
+                String doctorId =
+                        (String) doctor.get("doctorId");
+                String doctorName =
+                        (String) doctor.get("name");
+                String roomNumber =
+                        (String) doctor.get("roomNumber");
+
+                AssignDoctorRequest req =
+                        new AssignDoctorRequest();
+                req.setDoctorId(doctorId);
+                req.setDoctorName(doctorName);
+                req.setRoomNumber(roomNumber);
+
+                assignDoctor(entry.getPatientId(), req);
+
+                log.info("Doctor: {} auto-assigned to: {}",
+                        doctorName, entry.getPatientId());
+            } else {
+                log.warn("No doctor available for dept: {}",
+                        entry.getDepartmentId());
+            }
+        } catch (Exception e) {
+            log.warn("Auto doctor assignment failed: {}",
+                    e.getMessage());
+        }
     }
 
-    // Calculate estimated wait time (5 mins per patient)
+    // Notify all patients in department of updated positions
+    private void notifyAllPatientsInDept(String deptId) {
+        List<QueueEntry> snapshot =
+                queueManager.getQueueSnapshot(deptId);
+
+        snapshot.forEach(entry -> {
+            if (entry.getStatus() == QueueStatus.WAITING) {
+                notificationClient.sendPositionUpdate(
+                        entry.getTokenNumber(),
+                        entry.getPatientName(),
+                        deptId,
+                        entry.getPosition(),
+                        snapshot.size()
+                );
+            }
+        });
+
+        log.debug("All patients notified in dept: {}", deptId);
+    }
+
+    // Sync in-memory positions back to DB
+    private void syncPositionsToDB(String departmentId) {
+        List<QueueEntry> snapshot =
+                queueManager.getQueueSnapshot(departmentId);
+
+        snapshot.forEach(entry ->
+                queueRepository.findById(entry.getQueueId())
+                        .ifPresent(db -> {
+                            db.setPosition(entry.getPosition());
+                            queueRepository.save(db);
+                        }));
+    }
+
     private int calculateEstimatedWait(int position) {
         return (position - 1) * 5;
     }
 
-    // Map entity to response DTO
     private QueueEntryResponse mapToResponse(
             QueueEntry entry) {
         return new QueueEntryResponse(

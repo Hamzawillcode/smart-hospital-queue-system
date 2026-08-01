@@ -1,5 +1,6 @@
 package com.hospital.doctor.service.impl;
 
+import com.hospital.doctor.client.MonitorClient;
 import com.hospital.doctor.dto.DoctorRegisterRequest;
 import com.hospital.doctor.dto.DoctorResponse;
 import com.hospital.doctor.exception.DoctorNotFoundException;
@@ -25,6 +26,8 @@ public class DoctorServiceImpl implements DoctorService {
 
     @Autowired
     private DoctorRepository doctorRepository;
+    @Autowired
+    private MonitorClient monitorClient;
 
     // ─────────────────────────────────────────
     // REGISTER
@@ -180,6 +183,12 @@ public class DoctorServiceImpl implements DoctorService {
         doctor.setStatus(DoctorStatus.BUSY);
         Doctor updated = doctorRepository.save(doctor);
         log.info("Doctor: {} is now BUSY", doctor.getName());
+        monitorClient.logEvent(
+                "DOCTOR_ASSIGNED",
+                doctor.getDepartmentId(),
+                "Dr. " + doctor.getName()
+                        + " assigned to patient — status: BUSY"
+        );
         return mapToResponse(updated);
     }
 
@@ -198,6 +207,12 @@ public class DoctorServiceImpl implements DoctorService {
         Doctor updated = doctorRepository.save(doctor);
         log.info("Doctor: {} is now AVAILABLE",
                 doctor.getName());
+        monitorClient.logEvent(
+                "DOCTOR_FREED",
+                doctor.getDepartmentId(),
+                "Dr. " + doctor.getName()
+                        + " is now AVAILABLE"
+        );
         return mapToResponse(updated);
     }
 

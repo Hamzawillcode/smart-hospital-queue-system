@@ -1,0 +1,110 @@
+2026-06-29 00:24:07.234 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Starting NotificationServiceApplication using Java 21.0.10 with PID 53595 (/Users/hamzarouf/hospital_queue_system/notification-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/notification-service)
+2026-06-29 00:24:07.237 [restartedMain] DEBUG
+            com.hospital.notification.NotificationServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-29 00:24:07.238 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-29 00:24:07.746 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Started NotificationServiceApplication in 0.624 seconds (process running for 1.064)
+2026-06-29 00:24:17.278 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Starting NotificationServiceApplication using Java 21.0.10 with PID 53595 (/Users/hamzarouf/hospital_queue_system/notification-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/notification-service)
+2026-06-29 00:24:17.279 [restartedMain] DEBUG
+            com.hospital.notification.NotificationServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-06-29 00:24:17.279 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-06-29 00:24:17.376 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Started NotificationServiceApplication in 0.114 seconds (process running for 10.695)
+2026-06-29 00:24:27.741 [http-nio-8085-exec-1] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-1
+2026-06-29 00:26:11.928 [http-nio-8085-exec-9] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:26:11.929 [http-nio-8085-exec-9] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 3
+2026-06-29 00:26:11.934 [http-nio-8085-exec-9] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:27:26.568 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:27:26.569 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 3
+2026-06-29 00:27:26.570 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:27:32.719 [http-nio-8085-exec-3] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:27:32.720 [http-nio-8085-exec-3] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 2
+2026-06-29 00:27:32.721 [http-nio-8085-exec-3] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:27:36.855 [http-nio-8085-exec-4] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:27:36.855 [http-nio-8085-exec-4] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 3
+2026-06-29 00:27:36.856 [http-nio-8085-exec-4] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:28:43.465 [http-nio-8085-exec-6] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:28:43.467 [http-nio-8085-exec-6] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 5
+2026-06-29 00:28:43.468 [http-nio-8085-exec-6] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:28:43.468 [http-nio-8085-exec-6] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - 5-position alert sent to token: OPD-1
+2026-06-29 00:29:32.382 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:29:32.383 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 1
+2026-06-29 00:29:32.385 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:29:32.385 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Next-in-line alert sent to token: OPD-1
+2026-06-29 00:29:50.222 [http-nio-8085-exec-9] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:29:50.222 [http-nio-8085-exec-9] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 2
+2026-06-29 00:29:50.223 [http-nio-8085-exec-9] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:29:54.380 [http-nio-8085-exec-10] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:29:54.381 [http-nio-8085-exec-10] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 1
+2026-06-29 00:29:54.382 [http-nio-8085-exec-10] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:29:54.382 [http-nio-8085-exec-10] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Next-in-line alert sent to token: OPD-1
+2026-06-29 00:37:25.935 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notifying patient next: OPD-1 room: OPD-1
+2026-06-29 00:37:25.938 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Next notification sent to: OPD-1
+2026-06-29 00:39:19.068 [http-nio-8085-exec-5] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-1
+2026-06-29 00:39:28.250 [http-nio-8085-exec-10] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-3
+2026-06-29 00:39:42.589 [http-nio-8085-exec-5] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-2
+2026-06-29 00:44:05.684 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:44:05.684 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 3
+2026-06-29 00:44:05.685 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:49:46.274 [http-nio-8085-exec-4] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15
+2026-06-29 00:50:39.779 [http-nio-8085-exec-5] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15
+2026-06-29 00:50:41.892 [http-nio-8085-exec-7] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15
+2026-06-29 00:51:05.182 [http-nio-8085-exec-6] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15
+2026-06-29 00:51:06.071 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15
+2026-06-29 00:53:14.872 [http-nio-8085-exec-3] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-1
+2026-06-29 00:53:26.735 [http-nio-8085-exec-8] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15
+2026-06-29 00:54:37.816 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-1
+2026-06-29 00:54:37.817 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-1 position: 3
+2026-06-29 00:54:37.818 [http-nio-8085-exec-2] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-1
+2026-06-29 00:55:47.219 [http-nio-8085-exec-7] INFO 
+            com.hospital.notification.service.impl.NotificationServiceImpl - Broadcasting queue update for dept: OPD total: 15

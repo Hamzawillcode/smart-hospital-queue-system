@@ -1,5 +1,7 @@
 package com.hospital.patient.service.impl;
 
+import com.hospital.patient.client.MonitorClient;
+import com.hospital.patient.client.QueueServiceClient;
 import com.hospital.patient.dto.CheckInRequest;
 import com.hospital.patient.dto.PatientResponse;
 import com.hospital.patient.exception.DepartmentNotFoundException;
@@ -27,7 +29,6 @@ import java.util.stream.Collectors;
 @Service
 public class PatientServiceImpl implements PatientService {
 
-    // Logger instance — one per class
     private static final Logger log =
             LogManager.getLogger(PatientServiceImpl.class);
 
@@ -37,6 +38,15 @@ public class PatientServiceImpl implements PatientService {
     @Autowired
     private DepartmentRepository departmentRepository;
 
+    @Autowired
+    private QueueServiceClient queueClient;
+
+    @Autowired
+    private MonitorClient monitorClient;
+
+    // ─────────────────────────────────────────
+    // CHECK IN — THE MAIN FLOW
+    // ─────────────────────────────────────────
     @Override
     @Retryable(
             retryFor = {
@@ -49,12 +59,10 @@ public class PatientServiceImpl implements PatientService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public PatientResponse checkIn(CheckInRequest request) {
 
-        log.info("Check-in request received for: {} dept: {}",
+        log.info("Check-in request: {} dept: {}",
                 request.getName(), request.getDepartment());
 
-        // PESSIMISTIC LOCK on department row
-        // Thread 1 locks OPD → Thread 2 waits
-        // Thread 1 commits → Thread 2 proceeds with updated count
+        // 1. Validate + lock department
         Department department = departmentRepository
                 .findByIdWithLock(request.getDepartment())
                 .orElseThrow(() -> {
@@ -64,9 +72,7 @@ public class PatientServiceImpl implements PatientService {
                             request.getDepartment());
                 });
 
-        log.debug("Department locked: {}", department.getName());
-
-        // Build patient
+        // 2. Build patient
         Patient patient = new Patient();
         patient.setName(request.getName());
         patient.setPhone(request.getPhone());
@@ -74,112 +80,136 @@ public class PatientServiceImpl implements PatientService {
         patient.setStatus(PatientStatus.CHECKED_IN);
         patient.setCheckinTime(LocalDateTime.now());
 
-        // Token generation is now ATOMIC:
-        // currentQueueSize is incremented under the lock
-        // No two threads can get the same count
+        // 3. Generate token atomically under lock
         int newSize = department.getCurrentQueueSize() + 1;
         String token = request.getDepartment() + "-" + newSize;
         patient.setTokenNumber(token);
         department.setCurrentQueueSize(newSize);
 
-        log.debug("Token generated: {} under pessimistic lock",
-                token);
-
-        // Save patient and department in same transaction
+        // 4. Save to DB
         Patient saved = patientRepository.save(patient);
         departmentRepository.save(department);
 
-        // Lock released here when @Transactional commits
-        log.info("Check-in complete. Token: {} Patient: {}",
-                token, saved.getId());
+        log.info("Patient saved. ID: {} Token: {}",
+                saved.getId(), token);
+
+        // 5. Call queue-service (after transaction commits)
+        // This runs OUTSIDE the transaction — correct
+        queueClient.addToQueue(
+                saved.getId(),
+                saved.getName(),
+                saved.getDepartment(),
+                saved.getTokenNumber()
+        );
+
+        // 6. Log to monitor-service
+        monitorClient.logEvent(
+                "PATIENT_CHECKED_IN",
+                saved.getId(),
+                saved.getDepartment(),
+                saved.getName() + " checked into "
+                        + saved.getDepartment()
+                        + " with token " + token
+        );
 
         return mapToResponse(saved);
     }
 
+    // ─────────────────────────────────────────
+    // GET BY ID
+    // ─────────────────────────────────────────
     @Override
     public PatientResponse getById(String patientId) {
-        log.debug("Fetching patient by ID: {}", patientId);
-
+        log.debug("Fetching patient: {}", patientId);
         Patient patient = patientRepository
                 .findById(patientId)
                 .orElseThrow(() -> {
-                    log.warn("Patient not found with ID: {}",
+                    log.warn("Patient not found: {}",
                             patientId);
-                    return new PatientNotFoundException(patientId);
+                    return new PatientNotFoundException(
+                            patientId);
                 });
-
-        log.debug("Patient found: {}", patient.getName());
         return mapToResponse(patient);
     }
 
+    // ─────────────────────────────────────────
+    // GET ALL
+    // ─────────────────────────────────────────
     @Override
     public List<PatientResponse> getAll() {
         log.debug("Fetching all patients");
-        List<Patient> patients = patientRepository.findAll();
-        log.info("Total patients fetched: {}", patients.size());
-        return patients.stream()
+        return patientRepository.findAll()
+                .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
 
+    // ─────────────────────────────────────────
+    // GET BY DEPARTMENT
+    // ─────────────────────────────────────────
     @Override
     public List<PatientResponse> getByDepartment(
             String departmentId) {
-        log.debug("Fetching patients for department: {}",
+        log.debug("Fetching patients for dept: {}",
                 departmentId);
 
-        departmentRepository
-                .findById(departmentId)
-                .orElseThrow(() -> {
-                    log.warn("Department not found: {}",
-                            departmentId);
-                    return new DepartmentNotFoundException(
-                            departmentId);
-                });
+        departmentRepository.findById(departmentId)
+                .orElseThrow(() ->
+                        new DepartmentNotFoundException(
+                                departmentId));
 
-        List<Patient> patients = patientRepository
-                .findByDepartment(departmentId);
-
-        log.info("Found {} patients in department: {}",
-                patients.size(), departmentId);
-
-        return patients.stream()
+        return patientRepository
+                .findByDepartment(departmentId)
+                .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
 
+    // ─────────────────────────────────────────
+    // UPDATE STATUS
+    // ─────────────────────────────────────────
     @Override
     @Transactional
     public PatientResponse updateStatus(String patientId,
-                                        PatientStatus newStatus) {
-        log.info("Updating status for patient: {} to: {}",
-                patientId, newStatus);
+                                        PatientStatus status) {
+        log.info("Updating status: {} → {}",
+                patientId, status);
 
         Patient patient = patientRepository
                 .findById(patientId)
-                .orElseThrow(() -> {
-                    log.warn("Patient not found: {}", patientId);
-                    return new PatientNotFoundException(patientId);
-                });
+                .orElseThrow(() ->
+                        new PatientNotFoundException(
+                                patientId));
 
-        PatientStatus oldStatus = patient.getStatus();
-        patient.setStatus(newStatus);
+        PatientStatus old = patient.getStatus();
+        patient.setStatus(status);
         Patient updated = patientRepository.save(patient);
 
-        log.info("Patient status updated: {} → {} for ID: {}",
-                oldStatus, newStatus, patientId);
+        log.info("Status updated: {} → {} for: {}",
+                old, status, patientId);
+
+        // Log status change to monitor
+        monitorClient.logEvent(
+                "PATIENT_STATUS_UPDATED",
+                patientId,
+                patient.getDepartment(),
+                "Status changed from " + old + " to " + status
+        );
 
         return mapToResponse(updated);
     }
 
-    private PatientResponse mapToResponse(Patient patient) {
+    // ─────────────────────────────────────────
+    // PRIVATE MAPPER
+    // ─────────────────────────────────────────
+    private PatientResponse mapToResponse(Patient p) {
         return new PatientResponse(
-                patient.getId(),
-                patient.getName(),
-                patient.getDepartment(),
-                patient.getStatus(),
-                patient.getTokenNumber(),
-                patient.getCheckinTime()
+                p.getId(),
+                p.getName(),
+                p.getDepartment(),
+                p.getStatus(),
+                p.getTokenNumber(),
+                p.getCheckinTime()
         );
     }
 }

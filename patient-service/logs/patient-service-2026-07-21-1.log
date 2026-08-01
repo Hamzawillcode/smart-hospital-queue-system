@@ -1,0 +1,10 @@
+2026-07-21 01:16:57.374 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 20971 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-07-21 01:16:57.378 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-07-21 01:16:57.378 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-07-21 01:16:57.934 [restartedMain] DEBUG com.hospital.patient.security.JwtAuthFilter - Filter 'jwtAuthFilter' configured for use
+2026-07-21 01:16:59.456 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Started PatientServiceApplication in 2.199 seconds (process running for 2.65)
+2026-07-21 01:22:33.708 [http-nio-8081-exec-1] INFO  com.hospital.patient.service.impl.PatientServiceImpl - Check-in request: Hamza Rouf dept: OPD
+2026-07-21 01:22:33.769 [http-nio-8081-exec-1] INFO  com.hospital.patient.service.impl.PatientServiceImpl - Patient saved. ID: dc01f0bf-2b5c-46df-a479-3293ff801979 Token: OPD-6
+2026-07-21 01:22:33.769 [http-nio-8081-exec-1] INFO  com.hospital.patient.client.QueueServiceClient - Calling queue-service for patient: dc01f0bf-2b5c-46df-a479-3293ff801979
+2026-07-21 01:23:04.399 [http-nio-8081-exec-1] INFO  com.hospital.patient.client.QueueServiceClient - Patient: dc01f0bf-2b5c-46df-a479-3293ff801979 added to queue-service
+2026-07-21 01:23:34.485 [http-nio-8081-exec-1] WARN  com.hospital.patient.client.MonitorClient - Monitor log failed: 500 Internal Server Error from POST http://localhost:8084/monitor/log
