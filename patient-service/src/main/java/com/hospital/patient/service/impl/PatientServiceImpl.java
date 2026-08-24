@@ -1,11 +1,13 @@
 package com.hospital.patient.service.impl;
 
+import com.hospital.common.events.PatientCheckedInEvent;
 import com.hospital.patient.client.MonitorClient;
 import com.hospital.patient.client.QueueServiceClient;
 import com.hospital.patient.dto.CheckInRequest;
 import com.hospital.patient.dto.PatientResponse;
 import com.hospital.patient.exception.DepartmentNotFoundException;
 import com.hospital.patient.exception.PatientNotFoundException;
+import com.hospital.patient.kafka.PatientEventProducer;
 import com.hospital.patient.model.Department;
 import com.hospital.patient.model.Patient;
 import com.hospital.patient.model.PatientStatus;
@@ -38,12 +40,13 @@ public class PatientServiceImpl implements PatientService {
     @Autowired
     private DepartmentRepository departmentRepository;
 
-    @Autowired
-    private QueueServiceClient queueClient;
+    //@Autowired
+   // private QueueServiceClient queueClient;
 
     @Autowired
     private MonitorClient monitorClient;
-
+    @Autowired
+    private PatientEventProducer eventProducer;
     // ─────────────────────────────────────────
     // CHECK IN — THE MAIN FLOW
     // ─────────────────────────────────────────
@@ -62,15 +65,12 @@ public class PatientServiceImpl implements PatientService {
         log.info("Check-in request: {} dept: {}",
                 request.getName(), request.getDepartment());
 
-        // 1. Validate + lock department
+        // 1. Lock department + validate
         Department department = departmentRepository
                 .findByIdWithLock(request.getDepartment())
-                .orElseThrow(() -> {
-                    log.warn("Department not found: {}",
-                            request.getDepartment());
-                    return new DepartmentNotFoundException(
-                            request.getDepartment());
-                });
+                .orElseThrow(() ->
+                        new DepartmentNotFoundException(
+                                request.getDepartment()));
 
         // 2. Build patient
         Patient patient = new Patient();
@@ -80,7 +80,7 @@ public class PatientServiceImpl implements PatientService {
         patient.setStatus(PatientStatus.CHECKED_IN);
         patient.setCheckinTime(LocalDateTime.now());
 
-        // 3. Generate token atomically under lock
+        // 3. Generate token atomically
         int newSize = department.getCurrentQueueSize() + 1;
         String token = request.getDepartment() + "-" + newSize;
         patient.setTokenNumber(token);
@@ -93,23 +93,26 @@ public class PatientServiceImpl implements PatientService {
         log.info("Patient saved. ID: {} Token: {}",
                 saved.getId(), token);
 
-        // 5. Call queue-service (after transaction commits)
-        // This runs OUTSIDE the transaction — correct
-        queueClient.addToQueue(
+        // 5. Publish to Kafka (REPLACES REST call to queue-service)
+        PatientCheckedInEvent event = PatientCheckedInEvent.of(
                 saved.getId(),
                 saved.getName(),
+                saved.getPhone(),
                 saved.getDepartment(),
                 saved.getTokenNumber()
         );
+        eventProducer.publishPatientCheckedIn(event);
 
-        // 6. Log to monitor-service
+        // ← No more: queueClient.addToQueue(...)
+        // Queue-service will consume the Kafka event itself
+
+        // 6. Log to monitor (keep REST for now)
         monitorClient.logEvent(
                 "PATIENT_CHECKED_IN",
                 saved.getId(),
                 saved.getDepartment(),
-                saved.getName() + " checked into "
-                        + saved.getDepartment()
-                        + " with token " + token
+                saved.getName() + " checked in with token "
+                        + token
         );
 
         return mapToResponse(saved);
@@ -209,7 +212,8 @@ public class PatientServiceImpl implements PatientService {
                 p.getDepartment(),
                 p.getStatus(),
                 p.getTokenNumber(),
-                p.getCheckinTime()
+                p.getCheckinTime(),
+                p.getAssignedDoctorName()
         );
     }
 }

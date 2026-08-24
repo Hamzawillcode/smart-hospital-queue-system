@@ -53,7 +53,18 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- Kafka -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
 
+        <!-- Common events shared library -->
+        <dependency>
+            <groupId>com.hospital</groupId>
+            <artifactId>common-events</artifactId>
+            <version>1.0.0</version>
+        </dependency>
         <!-- Eureka Client & LoadBalancer -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

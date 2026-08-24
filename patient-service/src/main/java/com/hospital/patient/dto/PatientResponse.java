@@ -15,4 +15,5 @@ public class PatientResponse {
     private PatientStatus status;
     private String tokenNumber;
     private LocalDateTime checkinTime;
+    private String assignedDoctorName;
 }

@@ -1,0 +1,16 @@
+2026-07-26 16:04:15.517 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 59822 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-07-26 16:04:15.521 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-07-26 16:04:15.521 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-07-26 16:04:32.627 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 59855 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-07-26 16:04:32.630 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v4.1.0, Spring v7.0.8
+2026-07-26 16:04:32.630 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-07-26 16:18:20.429 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 60084 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
+2026-07-26 16:18:20.430 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
+2026-07-26 16:18:20.431 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
+2026-07-26 16:18:21.152 [restartedMain] DEBUG com.hospital.patient.security.JwtAuthFilter - Filter 'jwtAuthFilter' configured for use
+2026-07-26 16:18:22.593 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Started PatientServiceApplication in 2.283 seconds (process running for 2.635)
+2026-07-26 16:34:00.021 [http-nio-8081-exec-1] INFO  com.hospital.patient.service.impl.PatientServiceImpl - Check-in request: Eureka Test Patient dept: OPD
+2026-07-26 16:34:00.089 [http-nio-8081-exec-1] INFO  com.hospital.patient.service.impl.PatientServiceImpl - Patient saved. ID: d9936b24-7106-4563-83ed-983989de3864 Token: OPD-7
+2026-07-26 16:34:00.089 [http-nio-8081-exec-1] INFO  com.hospital.patient.client.QueueServiceClient - Calling queue-service for patient: d9936b24-7106-4563-83ed-983989de3864
+2026-07-26 16:34:05.246 [http-nio-8081-exec-1] ERROR com.hospital.patient.client.QueueServiceClient - Failed to add to queue: null
+2026-07-26 16:34:10.267 [http-nio-8081-exec-1] WARN  com.hospital.patient.client.MonitorClient - Monitor log failed: null

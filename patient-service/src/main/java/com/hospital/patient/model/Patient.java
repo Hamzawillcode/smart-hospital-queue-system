@@ -7,22 +7,33 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 @Entity
-@Table(name="patients")
+@Table(name = "patients")
 @Data
-@AllArgsConstructor
 @NoArgsConstructor
+@AllArgsConstructor
 public class Patient {
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
+
     @Column(nullable = false)
     private String name;
+
     private String phone;
+
     private String department;
+
     @Enumerated(EnumType.STRING)
     private PatientStatus status;
+
     private String tokenNumber;
+
     private LocalDateTime checkinTime;
+
+
+    private String assignedDoctorName;
+
     @Version
     private Long version;
 }

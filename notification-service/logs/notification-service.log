@@ -1,22 +1,20 @@
-2026-07-26 16:28:36.852 [restartedMain] INFO 
-            com.hospital.notification.NotificationServiceApplication - Starting NotificationServiceApplication using Java 21.0.10 with PID 60452 (/Users/hamzarouf/hospital_queue_system/notification-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/notification-service)
-2026-07-26 16:28:36.855 [restartedMain] DEBUG
+2026-08-25 00:30:25.835 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Starting NotificationServiceApplication using Java 21.0.10 with PID 10323 (/Users/hamzarouf/hospital_queue_system/notification-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/notification-service)
+2026-08-25 00:30:25.845 [restartedMain] DEBUG
             com.hospital.notification.NotificationServiceApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
-2026-07-26 16:28:36.856 [restartedMain] INFO 
+2026-08-25 00:30:25.845 [restartedMain] INFO 
             com.hospital.notification.NotificationServiceApplication - No active profile set, falling back to 1 default profile: "default"
-2026-07-26 16:28:37.707 [restartedMain] INFO 
-            com.hospital.notification.NotificationServiceApplication - Started NotificationServiceApplication in 0.982 seconds (process running for 1.412)
-2026-07-26 16:30:43.595 [restartedMain] INFO 
-            com.hospital.notification.NotificationServiceApplication - Starting NotificationServiceApplication using Java 21.0.10 with PID 60602 (/Users/hamzarouf/hospital_queue_system/notification-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/notification-service)
-2026-07-26 16:30:43.597 [restartedMain] DEBUG
+2026-08-25 00:30:27.262 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Started NotificationServiceApplication in 1.539 seconds (process running for 1.886)
+2026-08-25 00:32:43.616 [http-nio-8085-exec-1] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-1
+2026-08-25 00:38:02.966 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Starting NotificationServiceApplication using Java 21.0.10 with PID 10544 (/Users/hamzarouf/hospital_queue_system/notification-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/notification-service)
+2026-08-25 00:38:02.968 [restartedMain] DEBUG
             com.hospital.notification.NotificationServiceApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
-2026-07-26 16:30:43.598 [restartedMain] INFO 
+2026-08-25 00:38:02.968 [restartedMain] INFO 
             com.hospital.notification.NotificationServiceApplication - No active profile set, falling back to 1 default profile: "default"
-2026-07-26 16:30:44.454 [restartedMain] INFO 
-            com.hospital.notification.NotificationServiceApplication - Started NotificationServiceApplication in 0.963 seconds (process running for 1.327)
-2026-07-26 16:34:00.495 [http-nio-8085-exec-2] INFO 
-            com.hospital.notification.controller.NotificationController - Position update received for token: OPD-7
-2026-07-26 16:34:00.495 [http-nio-8085-exec-2] INFO 
-            com.hospital.notification.service.impl.NotificationServiceImpl - Sending position update to token: OPD-7 position: 4
-2026-07-26 16:34:00.500 [http-nio-8085-exec-2] INFO 
-            com.hospital.notification.service.impl.NotificationServiceImpl - Notification sent to: /topic/patient/OPD-7
+2026-08-25 00:38:04.155 [restartedMain] INFO 
+            com.hospital.notification.NotificationServiceApplication - Started NotificationServiceApplication in 1.29 seconds (process running for 1.73)
+2026-08-25 00:39:04.141 [http-nio-8085-exec-1] INFO 
+            com.hospital.notification.controller.NotificationController - Patient page requested for token: OPD-1

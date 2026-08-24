@@ -1,4 +1,12 @@
-2026-07-26 17:09:10.183 [main] INFO  com.hospital.gateway.ApiGatewayApplication - Starting ApiGatewayApplication using Java 21.0.10 with PID 61583 (/Users/hamzarouf/hospital_queue_system/api-gateway/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/api-gateway)
-2026-07-26 17:09:10.183 [main] DEBUG com.hospital.gateway.ApiGatewayApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
-2026-07-26 17:09:10.184 [main] INFO  com.hospital.gateway.ApiGatewayApplication - No active profile set, falling back to 1 default profile: "default"
-2026-07-26 17:09:10.988 [main] INFO  com.hospital.gateway.ApiGatewayApplication - Started ApiGatewayApplication in 0.92 seconds (process running for 1.229)
+2026-08-25 00:38:13.045 [main] INFO  com.hospital.gateway.ApiGatewayApplication - Starting ApiGatewayApplication using Java 21.0.10 with PID 10670 (/Users/hamzarouf/hospital_queue_system/api-gateway/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/api-gateway)
+2026-08-25 00:38:13.047 [main] DEBUG com.hospital.gateway.ApiGatewayApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
+2026-08-25 00:38:13.047 [main] INFO  com.hospital.gateway.ApiGatewayApplication - No active profile set, falling back to 1 default profile: "default"
+2026-08-25 00:38:13.869 [main] INFO  com.hospital.gateway.ApiGatewayApplication - Started ApiGatewayApplication in 0.932 seconds (process running for 1.26)
+2026-08-25 00:39:04.346 [reactor-http-nio-2] DEBUG com.hospital.gateway.JwtAuthenticationFilter - Gateway request: /ws/info
+2026-08-25 00:39:04.346 [reactor-http-nio-2] DEBUG com.hospital.gateway.JwtAuthenticationFilter - Public path — skipping auth: /ws/info
+2026-08-25 00:39:04.427 [reactor-http-nio-3] DEBUG com.hospital.gateway.JwtAuthenticationFilter - Gateway request: /ws/276/syaoyuuf/websocket
+2026-08-25 00:39:04.428 [reactor-http-nio-3] DEBUG com.hospital.gateway.JwtAuthenticationFilter - Public path — skipping auth: /ws/276/syaoyuuf/websocket
+2026-08-25 00:41:09.579 [reactor-http-nio-5] DEBUG com.hospital.gateway.JwtAuthenticationFilter - Gateway request: /api/patients/checkin
+2026-08-25 00:41:09.579 [reactor-http-nio-5] WARN  com.hospital.gateway.JwtAuthenticationFilter - Missing or invalid Authorization header for: /api/patients/checkin
+2026-08-25 00:49:25.319 [reactor-http-nio-9] DEBUG com.hospital.gateway.JwtAuthenticationFilter - Gateway request: /api/patients/checkin
+2026-08-25 00:49:25.320 [reactor-http-nio-9] WARN  com.hospital.gateway.JwtAuthenticationFilter - Missing or invalid Authorization header for: /api/patients/checkin

@@ -266,7 +266,10 @@
 <script th:inline="javascript">
     // Token from server (Thymeleaf injects this)
     const tokenNumber = [[${tokenNumber}]];
-    const wsUrl = [[${wsUrl}]];
+
+    // Use gateway port 8080 for WebSocket
+    // Gateway proxies to notification-service
+    const wsUrl = 'http://localhost:8080/ws';
 
     let stompClient = null;
 
