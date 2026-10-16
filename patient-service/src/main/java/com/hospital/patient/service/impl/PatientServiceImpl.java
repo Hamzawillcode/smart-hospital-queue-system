@@ -1,219 +1,113 @@
 package com.hospital.patient.service.impl;
 
-import com.hospital.common.events.PatientCheckedInEvent;
-import com.hospital.patient.client.MonitorClient;
-import com.hospital.patient.client.QueueServiceClient;
+import com.hospital.common.events.DoctorAssignedEvent;
+import com.hospital.common.events.DoctorReleasedEvent;
 import com.hospital.patient.dto.CheckInRequest;
 import com.hospital.patient.dto.PatientResponse;
 import com.hospital.patient.exception.DepartmentNotFoundException;
 import com.hospital.patient.exception.PatientNotFoundException;
-import com.hospital.patient.kafka.PatientEventProducer;
 import com.hospital.patient.model.Department;
-import com.hospital.patient.model.Patient;
 import com.hospital.patient.model.PatientStatus;
 import com.hospital.patient.repository.DepartmentRepository;
 import com.hospital.patient.repository.PatientRepository;
 import com.hospital.patient.service.PatientService;
-import jakarta.persistence.OptimisticLockException;
+import com.hospital.patient.service.PatientTransactions;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Transactional;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.stream.Collectors;
 
+import java.time.LocalDate;
+import java.util.List;
+
+/**
+ * Retry boundary. Each {@code @Retryable} method delegates to a {@code @Transactional}
+ * method on {@link PatientTransactions}, so every attempt starts a fresh transaction:
+ * <ul>
+ *   <li>check-in retries a pessimistic lock timeout or deadlock on the department row;</li>
+ *   <li>status updates retry an optimistic-lock (@Version) conflict on the patient row.</li>
+ * </ul>
+ */
 @Service
 public class PatientServiceImpl implements PatientService {
 
-    private static final Logger log =
-            LogManager.getLogger(PatientServiceImpl.class);
+    private static final Logger log = LogManager.getLogger(PatientServiceImpl.class);
 
-    @Autowired
-    private PatientRepository patientRepository;
+    private final PatientTransactions transactions;
+    private final PatientRepository patients;
+    private final DepartmentRepository departments;
 
-    @Autowired
-    private DepartmentRepository departmentRepository;
-
-    //@Autowired
-   // private QueueServiceClient queueClient;
-
-    @Autowired
-    private MonitorClient monitorClient;
-    @Autowired
-    private PatientEventProducer eventProducer;
-    // ─────────────────────────────────────────
-    // CHECK IN — THE MAIN FLOW
-    // ─────────────────────────────────────────
-    @Override
-    @Retryable(
-            retryFor = {
-                    OptimisticLockException.class,
-                    ObjectOptimisticLockingFailureException.class
-            },
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 100)
-    )
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public PatientResponse checkIn(CheckInRequest request) {
-
-        log.info("Check-in request: {} dept: {}",
-                request.getName(), request.getDepartment());
-
-        // 1. Lock department + validate
-        Department department = departmentRepository
-                .findByIdWithLock(request.getDepartment())
-                .orElseThrow(() ->
-                        new DepartmentNotFoundException(
-                                request.getDepartment()));
-
-        // 2. Build patient
-        Patient patient = new Patient();
-        patient.setName(request.getName());
-        patient.setPhone(request.getPhone());
-        patient.setDepartment(request.getDepartment());
-        patient.setStatus(PatientStatus.CHECKED_IN);
-        patient.setCheckinTime(LocalDateTime.now());
-
-        // 3. Generate token atomically
-        int newSize = department.getCurrentQueueSize() + 1;
-        String token = request.getDepartment() + "-" + newSize;
-        patient.setTokenNumber(token);
-        department.setCurrentQueueSize(newSize);
-
-        // 4. Save to DB
-        Patient saved = patientRepository.save(patient);
-        departmentRepository.save(department);
-
-        log.info("Patient saved. ID: {} Token: {}",
-                saved.getId(), token);
-
-        // 5. Publish to Kafka (REPLACES REST call to queue-service)
-        PatientCheckedInEvent event = PatientCheckedInEvent.of(
-                saved.getId(),
-                saved.getName(),
-                saved.getPhone(),
-                saved.getDepartment(),
-                saved.getTokenNumber()
-        );
-        eventProducer.publishPatientCheckedIn(event);
-
-        // ← No more: queueClient.addToQueue(...)
-        // Queue-service will consume the Kafka event itself
-
-        // 6. Log to monitor (keep REST for now)
-        monitorClient.logEvent(
-                "PATIENT_CHECKED_IN",
-                saved.getId(),
-                saved.getDepartment(),
-                saved.getName() + " checked in with token "
-                        + token
-        );
-
-        return mapToResponse(saved);
+    public PatientServiceImpl(PatientTransactions transactions, PatientRepository patients,
+                              DepartmentRepository departments) {
+        this.transactions = transactions;
+        this.patients = patients;
+        this.departments = departments;
     }
 
-    // ─────────────────────────────────────────
-    // GET BY ID
-    // ─────────────────────────────────────────
+    @Override
+    @Retryable(retryFor = PessimisticLockingFailureException.class,
+            maxAttempts = 3, backoff = @Backoff(delay = 100, multiplier = 2.0))
+    public PatientResponse checkIn(CheckInRequest request) {
+        return transactions.checkIn(request);
+    }
+
     @Override
     public PatientResponse getById(String patientId) {
-        log.debug("Fetching patient: {}", patientId);
-        Patient patient = patientRepository
-                .findById(patientId)
-                .orElseThrow(() -> {
-                    log.warn("Patient not found: {}",
-                            patientId);
-                    return new PatientNotFoundException(
-                            patientId);
-                });
-        return mapToResponse(patient);
+        return patients.findById(patientId).map(PatientResponse::from)
+                .orElseThrow(() -> new PatientNotFoundException(patientId));
     }
 
-    // ─────────────────────────────────────────
-    // GET ALL
-    // ─────────────────────────────────────────
     @Override
-    public List<PatientResponse> getAll() {
-        log.debug("Fetching all patients");
-        return patientRepository.findAll()
-                .stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public List<PatientResponse> getByDepartment(String departmentId, LocalDate date) {
+        if (!departments.existsById(departmentId)) {
+            throw new DepartmentNotFoundException(departmentId);
+        }
+        return patients.findByDepartmentAndCheckinDateOrderByTokenSequenceAsc(departmentId, date).stream()
+                .map(PatientResponse::from)
+                .toList();
     }
 
-    // ─────────────────────────────────────────
-    // GET BY DEPARTMENT
-    // ─────────────────────────────────────────
     @Override
-    public List<PatientResponse> getByDepartment(
-            String departmentId) {
-        log.debug("Fetching patients for dept: {}",
-                departmentId);
-
-        departmentRepository.findById(departmentId)
-                .orElseThrow(() ->
-                        new DepartmentNotFoundException(
-                                departmentId));
-
-        return patientRepository
-                .findByDepartment(departmentId)
-                .stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public List<Department> getDepartments() {
+        return departments.findAll();
     }
 
-    // ─────────────────────────────────────────
-    // UPDATE STATUS
-    // ─────────────────────────────────────────
     @Override
-    @Transactional
-    public PatientResponse updateStatus(String patientId,
-                                        PatientStatus status) {
-        log.info("Updating status: {} → {}",
-                patientId, status);
-
-        Patient patient = patientRepository
-                .findById(patientId)
-                .orElseThrow(() ->
-                        new PatientNotFoundException(
-                                patientId));
-
-        PatientStatus old = patient.getStatus();
-        patient.setStatus(status);
-        Patient updated = patientRepository.save(patient);
-
-        log.info("Status updated: {} → {} for: {}",
-                old, status, patientId);
-
-        // Log status change to monitor
-        monitorClient.logEvent(
-                "PATIENT_STATUS_UPDATED",
-                patientId,
-                patient.getDepartment(),
-                "Status changed from " + old + " to " + status
-        );
-
-        return mapToResponse(updated);
+    @Retryable(retryFor = ObjectOptimisticLockingFailureException.class,
+            maxAttempts = 3, backoff = @Backoff(delay = 50, multiplier = 2.0))
+    public PatientResponse updateStatus(String patientId, PatientStatus status) {
+        return transactions.applyStatus(patientId, status, null, null, true);
     }
 
-    // ─────────────────────────────────────────
-    // PRIVATE MAPPER
-    // ─────────────────────────────────────────
-    private PatientResponse mapToResponse(Patient p) {
-        return new PatientResponse(
-                p.getId(),
-                p.getName(),
-                p.getDepartment(),
-                p.getStatus(),
-                p.getTokenNumber(),
-                p.getCheckinTime(),
-                p.getAssignedDoctorName()
-        );
+    @Override
+    @Retryable(retryFor = ObjectOptimisticLockingFailureException.class,
+            maxAttempts = 3, backoff = @Backoff(delay = 50, multiplier = 2.0))
+    public void onDoctorAssigned(DoctorAssignedEvent event) {
+        applyFromEvent(event.patientId(), PatientStatus.IN_CONSULTATION, event.doctorName(), event.roomNumber());
+    }
+
+    @Override
+    @Retryable(retryFor = ObjectOptimisticLockingFailureException.class,
+            maxAttempts = 3, backoff = @Backoff(delay = 50, multiplier = 2.0))
+    public void onDoctorReleased(DoctorReleasedEvent event) {
+        PatientStatus target = switch (event.reason()) {
+            case CONSULTATION_COMPLETED -> PatientStatus.DONE;
+            case PATIENT_LEFT -> PatientStatus.LEFT;
+            case ASSIGNMENT_REJECTED -> null; // a doctor was handed back; the patient's visit is unaffected
+        };
+        if (target != null) {
+            applyFromEvent(event.patientId(), target, null, null);
+        }
+    }
+
+    private void applyFromEvent(String patientId, PatientStatus target, String doctorName, String room) {
+        if (patientId == null || !patients.existsById(patientId)) {
+            log.warn("Status event for unknown patient {} ignored", patientId);
+            return;
+        }
+        transactions.applyStatus(patientId, target, doctorName, room, false);
     }
 }

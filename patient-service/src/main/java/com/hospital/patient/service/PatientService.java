@@ -1,8 +1,13 @@
 package com.hospital.patient.service;
 
+import com.hospital.common.events.DoctorAssignedEvent;
+import com.hospital.common.events.DoctorReleasedEvent;
 import com.hospital.patient.dto.CheckInRequest;
 import com.hospital.patient.dto.PatientResponse;
+import com.hospital.patient.model.Department;
 import com.hospital.patient.model.PatientStatus;
+
+import java.time.LocalDate;
 import java.util.List;
 
 public interface PatientService {
@@ -11,10 +16,14 @@ public interface PatientService {
 
     PatientResponse getById(String patientId);
 
-    List<PatientResponse> getAll();
+    List<PatientResponse> getByDepartment(String departmentId, LocalDate date);
 
-    List<PatientResponse> getByDepartment(String departmentId);
+    List<Department> getDepartments();
 
-    PatientResponse updateStatus(String patientId,
-                                 PatientStatus newStatus);
+    /** Staff correction; must respect the status state machine. */
+    PatientResponse updateStatus(String patientId, PatientStatus status);
+
+    void onDoctorAssigned(DoctorAssignedEvent event);
+
+    void onDoctorReleased(DoctorReleasedEvent event);
 }

@@ -1,104 +1,80 @@
 package com.hospital.doctor.controller;
 
 import com.hospital.doctor.dto.DoctorRegisterRequest;
+import com.hospital.doctor.dto.DoctorRequestResponse;
 import com.hospital.doctor.dto.DoctorResponse;
 import com.hospital.doctor.dto.DoctorStatusUpdateRequest;
-import com.hospital.doctor.model.DoctorStatus;
+import com.hospital.doctor.model.DoctorRequest;
 import com.hospital.doctor.service.DoctorService;
 import jakarta.validation.Valid;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
 import java.util.List;
 
+/**
+ * Doctor registry API. Assignment and release happen only through Kafka events,
+ * so there are no "assign" or "free" endpoints that could bypass the locking flow.
+ */
 @RestController
 @RequestMapping("/doctors")
 public class DoctorController {
 
-    private static final Logger log =
-            LogManager.getLogger(DoctorController.class);
+    private final DoctorService doctorService;
 
-    @Autowired
-    private DoctorService doctorService;
+    public DoctorController(DoctorService doctorService) {
+        this.doctorService = doctorService;
+    }
 
-    // Register new doctor
     @PostMapping("/register")
-    public ResponseEntity<DoctorResponse> register(
-            @Valid @RequestBody DoctorRegisterRequest request) {
-        log.info("Register request for doctor: {}",
-                request.getName());
-        return new ResponseEntity<>(
-                doctorService.register(request),
-                HttpStatus.CREATED);
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<DoctorResponse> register(@Valid @RequestBody DoctorRegisterRequest request) {
+        return new ResponseEntity<>(doctorService.register(request), HttpStatus.CREATED);
     }
 
-    // Get doctor by ID
     @GetMapping("/{id}")
-    public ResponseEntity<DoctorResponse> getById(
-            @PathVariable String id) {
-        return ResponseEntity.ok(doctorService.getById(id));
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF','DOCTOR')")
+    public DoctorResponse getById(@PathVariable String id) {
+        return doctorService.getById(id);
     }
 
-    // Get all doctors
     @GetMapping("/all")
-    public ResponseEntity<List<DoctorResponse>> getAll() {
-        return ResponseEntity.ok(doctorService.getAll());
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF','DOCTOR')")
+    public List<DoctorResponse> getAll() {
+        return doctorService.getAll();
     }
 
-    // Get all doctors in a department
-    @GetMapping("/department/{deptId}")
-    public ResponseEntity<List<DoctorResponse>> getByDepartment(
-            @PathVariable String deptId) {
-        return ResponseEntity.ok(
-                doctorService.getByDepartment(deptId));
+    @GetMapping("/department/{departmentId}")
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF','DOCTOR')")
+    public List<DoctorResponse> getByDepartment(@PathVariable String departmentId) {
+        return doctorService.getByDepartment(departmentId);
     }
 
-    // Get available doctors in a department
-    @GetMapping("/department/{deptId}/available")
-    public ResponseEntity<List<DoctorResponse>> getAvailable(
-            @PathVariable String deptId) {
-        return ResponseEntity.ok(
-                doctorService.getAvailableByDepartment(deptId));
+    @GetMapping("/department/{departmentId}/available")
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF','DOCTOR')")
+    public List<DoctorResponse> getAvailable(@PathVariable String departmentId) {
+        return doctorService.getAvailableByDepartment(departmentId);
     }
 
-    // Find first available doctor in a department
-    // Queue service will call THIS endpoint on Day 13
-    @GetMapping("/department/{deptId}/first-available")
-    public ResponseEntity<DoctorResponse> findFirstAvailable(
-            @PathVariable String deptId) {
-        log.info("Finding first available doctor in: {}",
-                deptId);
-        return ResponseEntity.ok(
-                doctorService.findFirstAvailable(deptId));
+    @GetMapping("/department/{departmentId}/requests")
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
+    public List<DoctorRequestResponse> getRequests(@PathVariable String departmentId,
+                                                   @RequestParam(defaultValue = "PENDING") DoctorRequest.Status status) {
+        return doctorService.getRequests(departmentId, status);
     }
 
-    // Update doctor status
     @PutMapping("/{id}/status")
-    public ResponseEntity<DoctorResponse> updateStatus(
-            @PathVariable String id,
-            @RequestBody DoctorStatusUpdateRequest request) {
-        return ResponseEntity.ok(
-                doctorService.updateStatus(
-                        id, request.getStatus()));
-    }
-
-    // Assign doctor to patient (sets BUSY)
-    @PutMapping("/{id}/assign")
-    public ResponseEntity<DoctorResponse> assign(
-            @PathVariable String id) {
-        log.info("Assigning doctor: {}", id);
-        return ResponseEntity.ok(
-                doctorService.assignToPatient(id));
-    }
-
-    // Free doctor after consultation (sets AVAILABLE)
-    @PutMapping("/{id}/free")
-    public ResponseEntity<DoctorResponse> free(
-            @PathVariable String id) {
-        log.info("Freeing doctor: {}", id);
-        return ResponseEntity.ok(doctorService.freeDoctor(id));
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
+    public DoctorResponse updateStatus(@PathVariable String id, @Valid @RequestBody DoctorStatusUpdateRequest request) {
+        return doctorService.updateStatus(id, request.status());
     }
 }

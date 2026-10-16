@@ -1,232 +1,100 @@
 package com.hospital.doctor.service.impl;
 
-import com.hospital.doctor.client.MonitorClient;
 import com.hospital.doctor.dto.DoctorRegisterRequest;
+import com.hospital.doctor.dto.DoctorRequestResponse;
 import com.hospital.doctor.dto.DoctorResponse;
 import com.hospital.doctor.exception.DoctorNotFoundException;
-import com.hospital.doctor.exception.NoDoctorAvailableException;
 import com.hospital.doctor.model.Doctor;
+import com.hospital.doctor.model.DoctorRequest;
 import com.hospital.doctor.model.DoctorStatus;
 import com.hospital.doctor.repository.DoctorRepository;
+import com.hospital.doctor.repository.DoctorRequestRepository;
+import com.hospital.doctor.service.AssignmentService;
 import com.hospital.doctor.service.DoctorService;
+import com.hospital.doctor.service.DoctorStatusUpdater;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.UUID;
 
 @Service
 public class DoctorServiceImpl implements DoctorService {
 
-    private static final Logger log =
-            LogManager.getLogger(DoctorServiceImpl.class);
+    private static final Logger log = LogManager.getLogger(DoctorServiceImpl.class);
 
-    @Autowired
-    private DoctorRepository doctorRepository;
-    @Autowired
-    private MonitorClient monitorClient;
+    private final DoctorRepository doctors;
+    private final DoctorRequestRepository requests;
+    private final AssignmentService assignmentService;
+    private final DoctorStatusUpdater statusUpdater;
 
-    // ─────────────────────────────────────────
-    // REGISTER
-    // ─────────────────────────────────────────
-    @Override
-    @Transactional
-    public DoctorResponse register(
-            DoctorRegisterRequest request) {
-        log.info("Registering new doctor: {} in dept: {}",
-                request.getName(), request.getDepartmentId());
-
-        Doctor doctor = new Doctor();
-        doctor.setName(request.getName());
-        doctor.setDepartmentId(request.getDepartmentId());
-        doctor.setSpecialization(request.getSpecialization());
-        doctor.setRoomNumber(request.getRoomNumber());
-        doctor.setStatus(DoctorStatus.AVAILABLE);
-
-        Doctor saved = doctorRepository.save(doctor);
-        log.info("Doctor registered successfully: {}",
-                saved.getDoctorId());
-        return mapToResponse(saved);
+    public DoctorServiceImpl(DoctorRepository doctors, DoctorRequestRepository requests,
+                             AssignmentService assignmentService, DoctorStatusUpdater statusUpdater) {
+        this.doctors = doctors;
+        this.requests = requests;
+        this.assignmentService = assignmentService;
+        this.statusUpdater = statusUpdater;
     }
 
-    // ─────────────────────────────────────────
-    // GET BY ID
-    // ─────────────────────────────────────────
+    @Override
+    @Transactional
+    public DoctorResponse register(DoctorRegisterRequest request) {
+        Doctor doctor = new Doctor();
+        doctor.setDoctorId(UUID.randomUUID().toString());
+        doctor.setName(request.name());
+        doctor.setDepartmentId(request.departmentId());
+        doctor.setSpecialization(request.specialization());
+        doctor.setRoomNumber(request.roomNumber());
+        doctor.setStatus(DoctorStatus.AVAILABLE);
+        doctors.saveAndFlush(doctor);
+        assignmentService.publishStatus(doctor);
+        // A new doctor may be able to take a request that was waiting.
+        assignmentService.matchDepartment(doctor.getDepartmentId());
+        log.info("Registered doctor {} in {}", doctor.getDoctorId(), doctor.getDepartmentId());
+        return DoctorResponse.from(doctors.findById(doctor.getDoctorId()).orElseThrow());
+    }
+
     @Override
     public DoctorResponse getById(String doctorId) {
-        log.debug("Fetching doctor by ID: {}", doctorId);
-        Doctor doctor = doctorRepository
-                .findById(doctorId)
-                .orElseThrow(() -> {
-                    log.warn("Doctor not found: {}", doctorId);
-                    return new DoctorNotFoundException(doctorId);
-                });
-        return mapToResponse(doctor);
+        return doctors.findById(doctorId).map(DoctorResponse::from)
+                .orElseThrow(() -> new DoctorNotFoundException(doctorId));
     }
 
-    // ─────────────────────────────────────────
-    // GET ALL
-    // ─────────────────────────────────────────
     @Override
     public List<DoctorResponse> getAll() {
-        log.debug("Fetching all doctors");
-        List<Doctor> doctors = doctorRepository.findAll();
-        log.info("Total doctors fetched: {}", doctors.size());
-        return doctors.stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+        return doctors.findAll().stream().map(DoctorResponse::from).toList();
     }
 
-    // ─────────────────────────────────────────
-    // GET BY DEPARTMENT
-    // ─────────────────────────────────────────
     @Override
-    public List<DoctorResponse> getByDepartment(String deptId) {
-        log.debug("Fetching doctors for dept: {}", deptId);
-        List<Doctor> doctors = doctorRepository
-                .findByDepartmentId(deptId);
-        log.info("Found {} doctors in dept: {}",
-                doctors.size(), deptId);
-        return doctors.stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public List<DoctorResponse> getByDepartment(String departmentId) {
+        return doctors.findByDepartmentIdOrderByNameAsc(departmentId).stream().map(DoctorResponse::from).toList();
     }
 
-    // ─────────────────────────────────────────
-    // GET AVAILABLE BY DEPARTMENT
-    // ─────────────────────────────────────────
     @Override
-    public List<DoctorResponse> getAvailableByDepartment(
-            String deptId) {
-        log.debug("Fetching available doctors in dept: {}",
-                deptId);
-        List<Doctor> doctors = doctorRepository
-                .findByDepartmentIdAndStatus(
-                        deptId, DoctorStatus.AVAILABLE);
-        log.info("Found {} available doctors in dept: {}",
-                doctors.size(), deptId);
-        return doctors.stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public List<DoctorResponse> getAvailableByDepartment(String departmentId) {
+        return doctors.findByDepartmentIdAndStatusOrderByNameAsc(departmentId, DoctorStatus.AVAILABLE).stream()
+                .map(DoctorResponse::from).toList();
     }
 
-    // ─────────────────────────────────────────
-    // FIND FIRST AVAILABLE
-    // ─────────────────────────────────────────
+    /**
+     * Not transactional itself: each attempt calls the transactional updater, so a
+     * retry after {@link ObjectOptimisticLockingFailureException} re-reads fresh state.
+     */
     @Override
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public DoctorResponse findFirstAvailable(String deptId) {
-
-        log.info("Finding first available doctor in: {}",
-                deptId);
-
-        // Lock the available doctor row
-        // No other thread can assign this same doctor
-        // until this transaction commits
-        Doctor doctor = doctorRepository
-                .findFirstAvailableWithLock(deptId)
-                .orElseThrow(() -> {
-                    log.warn("No available doctor in: {}",
-                            deptId);
-                    return new NoDoctorAvailableException(deptId);
-                });
-
-        // Immediately mark as BUSY within same transaction
-        // Lock held until commit — no race condition
-        doctor.setStatus(DoctorStatus.BUSY);
-        Doctor updated = doctorRepository.save(doctor);
-
-        log.info("Doctor: {} assigned atomically in dept: {}",
-                updated.getName(), deptId);
-
-        return mapToResponse(updated);
+    @Retryable(retryFor = ObjectOptimisticLockingFailureException.class,
+            maxAttempts = 3, backoff = @Backoff(delay = 50, multiplier = 2.0))
+    public DoctorResponse updateStatus(String doctorId, DoctorStatus newStatus) {
+        return statusUpdater.updateStatus(doctorId, newStatus);
     }
 
-    // ─────────────────────────────────────────
-    // UPDATE STATUS
-    // ─────────────────────────────────────────
     @Override
-    @Transactional
-    public DoctorResponse updateStatus(String doctorId,
-                                       DoctorStatus newStatus) {
-        log.info("Updating status for doctor: {} to: {}",
-                doctorId, newStatus);
-        Doctor doctor = doctorRepository
-                .findById(doctorId)
-                .orElseThrow(() -> {
-                    log.warn("Doctor not found: {}", doctorId);
-                    return new DoctorNotFoundException(doctorId);
-                });
-
-        DoctorStatus oldStatus = doctor.getStatus();
-        doctor.setStatus(newStatus);
-        Doctor updated = doctorRepository.save(doctor);
-        log.info("Doctor status updated: {} → {} for ID: {}",
-                oldStatus, newStatus, doctorId);
-        return mapToResponse(updated);
-    }
-
-    // ─────────────────────────────────────────
-    // ASSIGN TO PATIENT
-    // ─────────────────────────────────────────
-    @Override
-    @Transactional
-    public DoctorResponse assignToPatient(String doctorId) {
-        log.info("Assigning doctor: {} to patient", doctorId);
-        Doctor doctor = doctorRepository
-                .findById(doctorId)
-                .orElseThrow(() ->
-                        new DoctorNotFoundException(doctorId));
-        doctor.setStatus(DoctorStatus.BUSY);
-        Doctor updated = doctorRepository.save(doctor);
-        log.info("Doctor: {} is now BUSY", doctor.getName());
-        monitorClient.logEvent(
-                "DOCTOR_ASSIGNED",
-                doctor.getDepartmentId(),
-                "Dr. " + doctor.getName()
-                        + " assigned to patient — status: BUSY"
-        );
-        return mapToResponse(updated);
-    }
-
-    // ─────────────────────────────────────────
-    // FREE DOCTOR (After consultation done)
-    // ─────────────────────────────────────────
-    @Override
-    @Transactional
-    public DoctorResponse freeDoctor(String doctorId) {
-        log.info("Freeing doctor: {}", doctorId);
-        Doctor doctor = doctorRepository
-                .findById(doctorId)
-                .orElseThrow(() ->
-                        new DoctorNotFoundException(doctorId));
-        doctor.setStatus(DoctorStatus.AVAILABLE);
-        Doctor updated = doctorRepository.save(doctor);
-        log.info("Doctor: {} is now AVAILABLE",
-                doctor.getName());
-        monitorClient.logEvent(
-                "DOCTOR_FREED",
-                doctor.getDepartmentId(),
-                "Dr. " + doctor.getName()
-                        + " is now AVAILABLE"
-        );
-        return mapToResponse(updated);
-    }
-
-    // ─────────────────────────────────────────
-    // PRIVATE MAPPER
-    // ─────────────────────────────────────────
-    private DoctorResponse mapToResponse(Doctor doctor) {
-        return new DoctorResponse(
-                doctor.getDoctorId(),
-                doctor.getName(),
-                doctor.getDepartmentId(),
-                doctor.getSpecialization(),
-                doctor.getRoomNumber(),
-                doctor.getStatus()
-        );
+    public List<DoctorRequestResponse> getRequests(String departmentId, DoctorRequest.Status status) {
+        return requests.findByDepartmentIdAndStatusOrderByRequestedAtAsc(departmentId, status).stream()
+                .map(DoctorRequestResponse::from).toList();
     }
 }

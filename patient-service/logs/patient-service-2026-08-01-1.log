@@ -1,5 +1,0 @@
-2026-08-01 21:03:26.545 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Starting PatientServiceApplication using Java 21.0.10 with PID 76793 (/Users/hamzarouf/hospital_queue_system/patient-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/patient-service)
-2026-08-01 21:03:26.547 [restartedMain] DEBUG com.hospital.patient.PatientServiceApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
-2026-08-01 21:03:26.548 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - No active profile set, falling back to 1 default profile: "default"
-2026-08-01 21:03:27.340 [restartedMain] DEBUG com.hospital.patient.security.JwtAuthFilter - Filter 'jwtAuthFilter' configured for use
-2026-08-01 21:03:28.928 [restartedMain] INFO  com.hospital.patient.PatientServiceApplication - Started PatientServiceApplication in 2.487 seconds (process running for 2.875)

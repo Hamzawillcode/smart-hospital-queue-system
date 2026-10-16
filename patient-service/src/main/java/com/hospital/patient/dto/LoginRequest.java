@@ -1,9 +1,8 @@
 package com.hospital.patient.dto;
 
-import lombok.Data;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
-@Data
-public class LoginRequest {
-    private String username;
-    private String password;
+public record LoginRequest(@NotBlank @Size(max = 64) String username,
+                           @NotBlank @Size(max = 128) String password) {
 }

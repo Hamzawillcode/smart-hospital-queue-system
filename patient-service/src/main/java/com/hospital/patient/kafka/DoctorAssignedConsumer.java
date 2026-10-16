@@ -1,49 +1,53 @@
 package com.hospital.patient.kafka;
 
 import com.hospital.common.events.DoctorAssignedEvent;
-import com.hospital.patient.model.PatientStatus;
-import com.hospital.patient.repository.PatientRepository;
+import com.hospital.common.events.KafkaTopics;
+import com.hospital.patient.service.PatientService;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.header.Header;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.annotation.RetryableTopic;
+import org.springframework.kafka.retrytopic.DltStrategy;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
 
 @Component
 public class DoctorAssignedConsumer {
 
-    private static final Logger log =
-            LogManager.getLogger(DoctorAssignedConsumer.class);
+    private static final Logger log = LogManager.getLogger(DoctorAssignedConsumer.class);
 
-    @Autowired
-    private PatientRepository patientRepository;
+    private final PatientService patientService;
 
-    @KafkaListener(
-            topics = "doctor.assigned",
-            groupId = "patient-service-group",
-            containerFactory = "doctorAssignedListenerFactory"
-    )
-    @Transactional
+    public DoctorAssignedConsumer(PatientService patientService) {
+        this.patientService = patientService;
+    }
+
+    @RetryableTopic(
+            attempts = "4",
+            backoff = @Backoff(delay = 1000, multiplier = 2.0, maxDelay = 10000),
+            retryTopicSuffix = "-patient-retry",
+            dltTopicSuffix = "-patient-dlt",
+            numPartitions = "${kafka.topics.partitions}",
+            replicationFactor = "${kafka.topics.replicas}",
+            exclude = IllegalArgumentException.class,
+            traversingCauses = "true",
+            dltStrategy = DltStrategy.FAIL_ON_ERROR,
+            kafkaTemplate = "kafkaTemplate")
+    @KafkaListener(topics = KafkaTopics.DOCTOR_ASSIGNED)
     public void onDoctorAssigned(DoctorAssignedEvent event) {
+        patientService.onDoctorAssigned(event);
+    }
 
-        log.info("Received doctor.assigned event: " +
-                        "patient={} doctor={} room={}",
-                event.getPatientId(),
-                event.getDoctorName(),
-                event.getRoomNumber());
-
-        patientRepository.findById(event.getPatientId())
-                .ifPresent(patient -> {
-                    patient.setStatus(PatientStatus.ASSIGNED);
-                    patient.setAssignedDoctorName(
-                            event.getDoctorName());
-                    patientRepository.save(patient);
-
-                    log.info("Patient {} status updated to " +
-                                    "ASSIGNED with Dr. {}",
-                            event.getPatientId(),
-                            event.getDoctorName());
-                });
+    @DltHandler
+    public void onDeadLetter(ConsumerRecord<String, String> record) {
+        Header error = record.headers().lastHeader(KafkaHeaders.DLT_EXCEPTION_MESSAGE);
+        log.error("doctor.assigned moved to {}: {} payload={}", record.topic(),
+                error == null ? "unknown error" : new String(error.value(), StandardCharsets.UTF_8), record.value());
     }
 }

@@ -1,11 +1,13 @@
 package com.hospital.patient.security;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import com.nimbusds.jose.jwk.source.ImmutableSecret;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -14,95 +16,112 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.util.StringUtils;
 
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * patient-service is the token issuer (POST /auth/login) and, like every other
+ * service, also a resource server that validates the JWT on each request.
+ *
+ * Tokens are HS256-signed and carry a {@code roles} claim (ADMIN, STAFF, DOCTOR) that
+ * each service maps to Spring authorities and checks with {@code @PreAuthorize}.
+ */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
-    @Autowired
-    private JwtAuthFilter jwtAuthFilter;
-
-    // ─────────────────────────────────────────
-    // DEFINE WHO CAN ACCESS WHAT
-    // ─────────────────────────────────────────
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http)
-            throws Exception {
-
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                // Disable CSRF (not needed for REST APIs)
                 .csrf(csrf -> csrf.disable())
-
-                // Define access rules
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // Auth endpoint — completely public
-                        .requestMatchers("/auth/**").permitAll()
-                        // ALLOW PATIENT CHECK-IN WITHOUT JWT (Added lines here)
-                        .requestMatchers("/patients/checkin", "/patients/check-in").permitAll()
-                        // Patient checking own status — public
-                        .requestMatchers(HttpMethod.GET,
-                                "/patients/{id}").permitAll()
-
-                        // H2 console — public (dev only)
-                        .requestMatchers("/h2-console/**").permitAll()
-
-                        // Everything else requires JWT
-                        .anyRequest().authenticated()
-                )
-
-                // Stateless — no sessions (JWT handles state)
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(
-                                SessionCreationPolicy.STATELESS))
-
-                // Add our JWT filter BEFORE Spring's default filter
-                .addFilterBefore(jwtAuthFilter,
-                        UsernamePasswordAuthenticationFilter.class);
-
+                        .requestMatchers("/auth/login").permitAll()
+                        .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
+                        .anyRequest().authenticated())
+                .oauth2ResourceServer(oauth -> oauth.jwt(jwt ->
+                        jwt.jwtAuthenticationConverter(rolesConverter())));
         return http.build();
     }
 
-    // ─────────────────────────────────────────
-    // HARDCODED USERS (fine for dev)
-    // ─────────────────────────────────────────
     @Bean
-    public UserDetailsService userDetailsService() {
-
-        UserDetails admin = User.builder()
-                .username("admin")
-                .password(passwordEncoder()
-                        .encode("admin123"))
-                .roles("ADMIN")
-                .build();
-
-        UserDetails receptionist = User.builder()
-                .username("receptionist")
-                .password(passwordEncoder()
-                        .encode("recep123"))
-                .roles("STAFF")
-                .build();
-
-        return new InMemoryUserDetailsManager(
-                admin, receptionist);
+    public SecretKey jwtSigningKey(@Value("${security.jwt.secret}") String secret) {
+        byte[] key = secret.getBytes(StandardCharsets.UTF_8);
+        if (key.length < 32) {
+            throw new IllegalStateException("security.jwt.secret must be at least 32 bytes for HS256");
+        }
+        return new SecretKeySpec(key, "HmacSHA256");
     }
 
-    // ─────────────────────────────────────────
-    // PASSWORD ENCODER
-    // ─────────────────────────────────────────
+    @Bean
+    public JwtEncoder jwtEncoder(SecretKey jwtSigningKey) {
+        return new NimbusJwtEncoder(new ImmutableSecret<>(jwtSigningKey));
+    }
+
+    @Bean
+    public JwtDecoder jwtDecoder(SecretKey jwtSigningKey, @Value("${security.jwt.issuer}") String issuer) {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(jwtSigningKey)
+                .macAlgorithm(MacAlgorithm.HS256)
+                .build();
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuer)));
+        return decoder;
+    }
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
-    // ─────────────────────────────────────────
-    // AUTHENTICATION MANAGER
-    // ─────────────────────────────────────────
     @Bean
-    public AuthenticationManager authenticationManager(
-            AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
+    public UserDetailsService userDetailsService(StaffUsersProperties properties, PasswordEncoder encoder) {
+        if (properties.users() == null || properties.users().isEmpty()) {
+            throw new IllegalStateException("No staff users configured (app.security.users.*)");
+        }
+        List<UserDetails> users = new ArrayList<>();
+        properties.users().forEach((username, user) -> {
+            if (!StringUtils.hasText(user.password())) {
+                throw new IllegalStateException("Password for staff user '" + username + "' is not set");
+            }
+            users.add(User.withUsername(username)
+                    .password(encoder.encode(user.password()))
+                    .roles(user.roles().toArray(String[]::new))
+                    .build());
+        });
+        return new InMemoryUserDetailsManager(users);
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(UserDetailsService userDetailsService,
+                                                       PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+        return new ProviderManager(provider);
+    }
+
+    private static JwtAuthenticationConverter rolesConverter() {
+        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("roles");
+        authorities.setAuthorityPrefix("ROLE_");
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        return converter;
     }
 }

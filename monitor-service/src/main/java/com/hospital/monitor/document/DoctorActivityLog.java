@@ -1,30 +1,20 @@
 package com.hospital.monitor.document;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
-import java.time.LocalDateTime;
 
+import java.time.Instant;
+
+/** History of doctor availability changes (from doctor.status-changed). */
 @Document(collection = "doctor_activity_logs")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class DoctorActivityLog {
-
-    @Id
-    private String id;
-
-    private String doctorId;
-
-    private String doctorName;
-
-    private String departmentId;
-
-    private String action;
-
-    private String patientId;
-
-    private LocalDateTime recordedAt;
+public record DoctorActivityLog(
+        @Id String eventId,
+        @Indexed String doctorId,
+        String doctorName,
+        @Indexed String departmentId,
+        String status,
+        String requestId,
+        long version,
+        Instant occurredAt) {
 }

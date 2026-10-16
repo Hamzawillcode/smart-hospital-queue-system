@@ -1,29 +1,49 @@
 package com.hospital.queue.factory;
 
-import com.hospital.queue.strategy.EmergencyPriorityStrategy;
-import com.hospital.queue.strategy.FifoStrategy;
+import com.hospital.queue.config.QueueProperties;
 import com.hospital.queue.strategy.QueuePriorityStrategy;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+/**
+ * Factory pattern: resolves the ordering strategy for a department from configuration.
+ *
+ * Every {@link QueuePriorityStrategy} bean registers itself by name. Unknown strategy
+ * names in configuration fail fast at startup instead of at the first check-in.
+ */
 @Component
 public class QueueStrategyFactory {
 
-    @Autowired
-    private FifoStrategy fifoStrategy;
+    private final Map<String, QueuePriorityStrategy> strategiesByName =
+            new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    private final Map<String, String> departmentOverrides;
+    private final QueuePriorityStrategy defaultStrategy;
 
-    @Autowired
-    private EmergencyPriorityStrategy emergencyStrategy;
-
-    public QueuePriorityStrategy getStrategy(
-            String departmentId) {
-
-        // Emergency department gets priority strategy
-        if ("EMERGENCY".equalsIgnoreCase(departmentId)) {
-            return emergencyStrategy;
+    public QueueStrategyFactory(List<QueuePriorityStrategy> strategies, QueueProperties properties) {
+        for (QueuePriorityStrategy strategy : strategies) {
+            if (strategiesByName.putIfAbsent(strategy.name(), strategy) != null) {
+                throw new IllegalStateException("Duplicate queue strategy name: " + strategy.name());
+            }
         }
+        this.departmentOverrides = properties.strategy().departmentOverrides();
+        this.defaultStrategy = require(properties.strategy().defaultStrategy());
+        departmentOverrides.values().forEach(this::require);
+    }
 
-        // All other departments use FIFO
-        return fifoStrategy;
+    public QueuePriorityStrategy forDepartment(String departmentId) {
+        String name = departmentOverrides.get(departmentId);
+        return name == null ? defaultStrategy : strategiesByName.get(name);
+    }
+
+    private QueuePriorityStrategy require(String name) {
+        QueuePriorityStrategy strategy = strategiesByName.get(name);
+        if (strategy == null) {
+            throw new IllegalStateException("Unknown queue strategy '" + name
+                    + "'. Available: " + strategiesByName.keySet());
+        }
+        return strategy;
     }
 }

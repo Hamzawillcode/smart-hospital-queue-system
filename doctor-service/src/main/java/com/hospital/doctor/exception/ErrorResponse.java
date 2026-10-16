@@ -1,13 +1,6 @@
 package com.hospital.doctor.exception;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
-@Data
-@AllArgsConstructor
-public class ErrorResponse {
-    private int status;
-    private String message;
-    private LocalDateTime timestamp;
+public record ErrorResponse(int status, String error, String message, Instant timestamp) {
 }

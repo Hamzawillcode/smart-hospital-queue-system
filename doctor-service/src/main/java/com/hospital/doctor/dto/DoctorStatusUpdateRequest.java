@@ -1,9 +1,7 @@
 package com.hospital.doctor.dto;
 
 import com.hospital.doctor.model.DoctorStatus;
-import lombok.Data;
+import jakarta.validation.constraints.NotNull;
 
-@Data
-public class DoctorStatusUpdateRequest {
-    private DoctorStatus status;
+public record DoctorStatusUpdateRequest(@NotNull DoctorStatus status) {
 }

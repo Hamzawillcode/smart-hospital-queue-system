@@ -1,27 +1,27 @@
 package com.hospital.monitor.service;
 
-import com.hospital.monitor.dto.*;
+import com.hospital.monitor.document.DeadLetterRecord;
+import com.hospital.monitor.document.QueueSnapshot;
+import com.hospital.monitor.dto.DashboardResponse;
+import com.hospital.monitor.dto.DepartmentStatsResponse;
+import com.hospital.monitor.dto.EventLogResponse;
+
 import java.util.List;
 
 public interface MonitorService {
 
-    // Log any event from any service
-    void logEvent(LogEventRequest request);
-
-    // Hospital-wide dashboard
     DashboardResponse getDashboard();
 
-    // Stats for one department
-    DepartmentStatsResponse getDepartmentStats(
-            String departmentId);
+    DepartmentStatsResponse getDepartmentStats(String departmentId);
 
-    // Recent events
+    List<QueueSnapshot> getSnapshotHistory(String departmentId, int limit);
+
     List<EventLogResponse> getRecentEvents(int limit);
 
-    // Events for a specific patient
-    List<EventLogResponse> getPatientHistory(
-            String patientId);
+    List<EventLogResponse> getPatientHistory(String patientId);
 
-    // Take a snapshot of current queue state
-    void takeQueueSnapshot(String departmentId);
+    List<DeadLetterRecord> getDeadLetters(DeadLetterRecord.Status status);
+
+    /** Re-publishes a dead letter to its original topic. All consumers are idempotent. */
+    DeadLetterRecord replayDeadLetter(String id);
 }

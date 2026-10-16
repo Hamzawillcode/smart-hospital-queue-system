@@ -2,69 +2,39 @@ package com.hospital.patient.controller;
 
 import com.hospital.patient.dto.LoginRequest;
 import com.hospital.patient.dto.LoginResponse;
-import com.hospital.patient.security.JwtUtil;
+import com.hospital.patient.security.JwtTokenService;
+import jakarta.validation.Valid;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication
-        .AuthenticationManager;
-import org.springframework.security.authentication
-        .BadCredentialsException;
-import org.springframework.security.authentication
-        .UsernamePasswordAuthenticationToken;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
 
-    private static final Logger log =
-            LogManager.getLogger(AuthController.class);
+    private static final Logger log = LogManager.getLogger(AuthController.class);
 
-    @Autowired
-    private AuthenticationManager authenticationManager;
+    private final AuthenticationManager authenticationManager;
+    private final JwtTokenService tokenService;
 
-    @Autowired
-    private JwtUtil jwtUtil;
+    public AuthController(AuthenticationManager authenticationManager, JwtTokenService tokenService) {
+        this.authenticationManager = authenticationManager;
+        this.tokenService = tokenService;
+    }
 
+    /** Bad credentials raise AuthenticationException, mapped to a generic 401 by GlobalExceptionHandler. */
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(
-            @RequestBody LoginRequest request) {
-
-        log.info("Login attempt for username: {}",
-                request.getUsername());
-
-        try {
-            Authentication auth = authenticationManager
-                    .authenticate(
-                            new UsernamePasswordAuthenticationToken(
-                                    request.getUsername(),
-                                    request.getPassword()));
-
-            String token = jwtUtil.generateToken(
-                    request.getUsername());
-
-            log.info("Login successful for user: {}",
-                    request.getUsername());
-
-            return ResponseEntity.ok(new LoginResponse(
-                    token,
-                    request.getUsername(),
-                    "Login successful"));
-
-        } catch (BadCredentialsException e) {
-            log.warn("Login failed for username: {} — " +
-                            "invalid credentials",
-                    request.getUsername());
-
-            return new ResponseEntity<>(
-                    new LoginResponse(null,
-                            request.getUsername(),
-                            "Invalid username or password"),
-                    HttpStatus.UNAUTHORIZED);
-        }
+    public LoginResponse login(@Valid @RequestBody LoginRequest request) {
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(request.username(), request.password()));
+        JwtTokenService.IssuedToken token = tokenService.issue(authentication);
+        log.info("Issued token for {} with roles {}", authentication.getName(), token.roles());
+        return new LoginResponse(token.value(), "Bearer", token.expiresAt(), authentication.getName(), token.roles());
     }
 }

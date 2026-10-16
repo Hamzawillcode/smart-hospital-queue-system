@@ -1,22 +1,45 @@
 package com.hospital.patient.model;
 
-import jakarta.persistence.*;
-import lombok.Data;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
+import lombok.Setter;
 
+import java.time.LocalDate;
+
+/**
+ * Department plus its daily token counter. Only ever modified while holding
+ * the row lock (see DepartmentRepository#findByIdForUpdate), so it needs no @Version.
+ */
 @Entity
 @Table(name = "departments")
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
-@AllArgsConstructor
 public class Department {
 
     @Id
-    private String deptId;       // e.g. "OPD", "EMERGENCY", "CARDIOLOGY"
+    @Column(length = 32)
+    private String deptId;
 
     @Column(nullable = false)
     private String name;
 
-    private int currentQueueSize;
+    /** Day the counter belongs to; a check-in on a later day restarts numbering at 1. */
+    private LocalDate tokenDate;
+
+    @Column(nullable = false)
+    private int lastTokenNumber;
+
+    /** Allocates the next token for {@code today}. Caller must hold the row lock. */
+    public int nextToken(LocalDate today) {
+        if (!today.equals(tokenDate)) {
+            tokenDate = today;
+            lastTokenNumber = 0;
+        }
+        return ++lastTokenNumber;
+    }
 }

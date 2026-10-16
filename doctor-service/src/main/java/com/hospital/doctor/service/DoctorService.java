@@ -1,8 +1,11 @@
 package com.hospital.doctor.service;
 
 import com.hospital.doctor.dto.DoctorRegisterRequest;
+import com.hospital.doctor.dto.DoctorRequestResponse;
 import com.hospital.doctor.dto.DoctorResponse;
+import com.hospital.doctor.model.DoctorRequest;
 import com.hospital.doctor.model.DoctorStatus;
+
 import java.util.List;
 
 public interface DoctorService {
@@ -13,16 +16,12 @@ public interface DoctorService {
 
     List<DoctorResponse> getAll();
 
-    List<DoctorResponse> getByDepartment(String deptId);
+    List<DoctorResponse> getByDepartment(String departmentId);
 
-    List<DoctorResponse> getAvailableByDepartment(String deptId);
+    List<DoctorResponse> getAvailableByDepartment(String departmentId);
 
-    DoctorResponse findFirstAvailable(String deptId);
+    /** Manual change (break, off duty, back on shift). Retried automatically on optimistic-lock conflicts. */
+    DoctorResponse updateStatus(String doctorId, DoctorStatus newStatus);
 
-    DoctorResponse updateStatus(String doctorId,
-                                DoctorStatus newStatus);
-
-    DoctorResponse assignToPatient(String doctorId);
-
-    DoctorResponse freeDoctor(String doctorId);
+    List<DoctorRequestResponse> getRequests(String departmentId, DoctorRequest.Status status);
 }

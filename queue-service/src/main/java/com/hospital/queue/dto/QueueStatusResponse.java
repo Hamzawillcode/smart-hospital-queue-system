@@ -1,14 +1,17 @@
 package com.hospital.queue.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
 import java.util.List;
 
-@Data
-@AllArgsConstructor
-public class QueueStatusResponse {
-    private String departmentId;
-    private int totalWaiting;
-    private int totalAssigned;
-    private List<QueueEntryResponse> queue;
+/**
+ * @param waiting patients in queue order
+ * @param active  patients who have been called or are with a doctor
+ */
+public record QueueStatusResponse(
+        String departmentId,
+        long version,
+        String strategy,
+        int waitingCount,
+        int activeCount,
+        List<QueueEntryResponse> waiting,
+        List<QueueEntryResponse> active) {
 }

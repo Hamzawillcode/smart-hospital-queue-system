@@ -1,20 +1,13 @@
 package com.hospital.doctor.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import lombok.Data;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
-@Data
-public class DoctorRegisterRequest {
-
-    @NotBlank(message = "Name cannot be empty")
-    private String name;
-
-    @NotBlank(message = "Department cannot be empty")
-    private String departmentId;
-
-    @NotBlank(message = "Specialization cannot be empty")
-    private String specialization;
-
-    @NotBlank(message = "Room number cannot be empty")
-    private String roomNumber;
+public record DoctorRegisterRequest(
+        @NotBlank @Size(max = 255) String name,
+        @NotBlank @Pattern(regexp = "^[A-Z][A-Z0-9_-]{1,31}$", message = "must be an upper-case department code")
+        String departmentId,
+        @NotBlank @Size(max = 255) String specialization,
+        @NotBlank @Size(max = 32) String roomNumber) {
 }

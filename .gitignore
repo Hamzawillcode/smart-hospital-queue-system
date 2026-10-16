@@ -1,1 +1,14 @@
 HibernateDemo/
+
+# Secrets
+.env
+
+# Build output and runtime files
+target/
+logs/
+*.log
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store

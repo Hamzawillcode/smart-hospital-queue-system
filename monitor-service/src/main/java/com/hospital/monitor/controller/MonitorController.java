@@ -1,76 +1,70 @@
 package com.hospital.monitor.controller;
 
-import com.hospital.monitor.dto.*;
+import com.hospital.monitor.document.DeadLetterRecord;
+import com.hospital.monitor.document.QueueSnapshot;
+import com.hospital.monitor.dto.DashboardResponse;
+import com.hospital.monitor.dto.DepartmentStatsResponse;
+import com.hospital.monitor.dto.EventLogResponse;
 import com.hospital.monitor.service.MonitorService;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
 import java.util.List;
 
+/**
+ * Read-only operations API. Data arrives only through Kafka; there is no
+ * "log an event" endpoint any more, so nobody can inject fake events over HTTP.
+ */
 @RestController
 @RequestMapping("/monitor")
+@PreAuthorize("hasAnyRole('ADMIN','STAFF')")
 public class MonitorController {
 
-    private static final Logger log =
-            LogManager.getLogger(MonitorController.class);
+    private final MonitorService monitorService;
 
-    @Autowired
-    private MonitorService monitorService;
-
-    // Log an event (called by other services)
-    @PostMapping("/log")
-    public ResponseEntity<String> logEvent(
-            @RequestBody LogEventRequest request) {
-        log.info("Event received: {} from: {}",
-                request.getEventType(),
-                request.getSourceService());
-        monitorService.logEvent(request);
-        return new ResponseEntity<>(
-                "Event logged successfully",
-                HttpStatus.CREATED);
+    public MonitorController(MonitorService monitorService) {
+        this.monitorService = monitorService;
     }
 
-    // Hospital admin dashboard
     @GetMapping("/dashboard")
-    public ResponseEntity<DashboardResponse> getDashboard() {
-        log.info("Dashboard requested");
-        return ResponseEntity.ok(
-                monitorService.getDashboard());
+    public DashboardResponse dashboard() {
+        return monitorService.getDashboard();
     }
 
-    // Department specific stats
-    @GetMapping("/department/{deptId}/stats")
-    public ResponseEntity<DepartmentStatsResponse> getDeptStats(
-            @PathVariable String deptId) {
-        return ResponseEntity.ok(
-                monitorService.getDepartmentStats(deptId));
+    @GetMapping("/departments/{departmentId}/stats")
+    public DepartmentStatsResponse departmentStats(@PathVariable String departmentId) {
+        return monitorService.getDepartmentStats(departmentId);
     }
 
-    // Recent events
+    @GetMapping("/departments/{departmentId}/snapshots")
+    public List<QueueSnapshot> snapshots(@PathVariable String departmentId,
+                                         @RequestParam(defaultValue = "50") int limit) {
+        return monitorService.getSnapshotHistory(departmentId, limit);
+    }
+
     @GetMapping("/events/recent")
-    public ResponseEntity<List<EventLogResponse>> getRecent(
-            @RequestParam(defaultValue = "10") int limit) {
-        return ResponseEntity.ok(
-                monitorService.getRecentEvents(limit));
+    public List<EventLogResponse> recentEvents(@RequestParam(defaultValue = "20") int limit) {
+        return monitorService.getRecentEvents(limit);
     }
 
-    // Patient event history
-    @GetMapping("/patient/{patientId}/history")
-    public ResponseEntity<List<EventLogResponse>> getHistory(
-            @PathVariable String patientId) {
-        return ResponseEntity.ok(
-                monitorService.getPatientHistory(patientId));
+    @GetMapping("/patients/{patientId}/events")
+    public List<EventLogResponse> patientHistory(@PathVariable String patientId) {
+        return monitorService.getPatientHistory(patientId);
     }
 
-    // Take queue snapshot for a department
-    @PostMapping("/snapshot/{deptId}")
-    public ResponseEntity<String> takeSnapshot(
-            @PathVariable String deptId) {
-        monitorService.takeQueueSnapshot(deptId);
-        return ResponseEntity.ok(
-                "Snapshot taken for: " + deptId);
+    @GetMapping("/dead-letters")
+    public List<DeadLetterRecord> deadLetters(@RequestParam(defaultValue = "NEW") DeadLetterRecord.Status status) {
+        return monitorService.getDeadLetters(status);
+    }
+
+    @PostMapping("/dead-letters/{id}/replay")
+    @PreAuthorize("hasRole('ADMIN')")
+    public DeadLetterRecord replay(@PathVariable String id) {
+        return monitorService.replayDeadLetter(id);
     }
 }
