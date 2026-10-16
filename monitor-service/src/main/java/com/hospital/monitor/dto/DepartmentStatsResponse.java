@@ -1,15 +1,22 @@
 package com.hospital.monitor.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import java.time.Instant;
+import java.util.Map;
 
-@Data
-@AllArgsConstructor
-public class DepartmentStatsResponse {
-    private String departmentId;
-    private int currentlyWaiting;
-    private int currentlyInConsultation;
-    private long availableDoctors;
-    private double avgWaitMinutes;
-    private long totalServedToday;
+/**
+ * @param doctorsByStatus e.g. {AVAILABLE=1, BUSY=2}
+ * @param avgWaitMinutes  average wait of currently waiting patients at the last snapshot
+ */
+public record DepartmentStatsResponse(
+        String departmentId,
+        String strategy,
+        long snapshotVersion,
+        int waiting,
+        int active,
+        double avgWaitMinutes,
+        double longestWaitMinutes,
+        Map<String, Long> doctorsByStatus,
+        long checkInsToday,
+        long completedToday,
+        Instant lastUpdated) {
 }

@@ -1,32 +1,24 @@
 package com.hospital.monitor.repository;
 
 import com.hospital.monitor.document.EventLog;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.MongoRepository;
-import java.time.LocalDateTime;
+
+import java.time.Instant;
 import java.util.List;
 
-public interface EventLogRepository
-        extends MongoRepository<EventLog, String> {
+public interface EventLogRepository extends MongoRepository<EventLog, String> {
 
-    // Find recent events ordered by time
-    List<EventLog> findTop10ByOrderByRecordedAtDesc();
+    List<EventLog> findByOrderByOccurredAtDesc(Pageable pageable);
 
-    // Find events by type
-    List<EventLog> findByEventTypeOrderByRecordedAtDesc(
-            String eventType);
+    List<EventLog> findByPatientIdOrderByOccurredAtAsc(String patientId);
 
-    // Find events for a department
-    List<EventLog> findByDepartmentIdOrderByRecordedAtDesc(
-            String departmentId);
+    long countByEventTypeAndOccurredAtAfter(String eventType, Instant after);
 
-    // Find events for a patient
-    List<EventLog> findByPatientIdOrderByRecordedAtDesc(
-            String patientId);
+    long countByEventTypeAndDepartmentIdAndOccurredAtAfter(String eventType, String departmentId, Instant after);
 
-    // Count events after a time (for "today" stats)
-    long countByRecordedAtAfter(LocalDateTime after);
+    long countByEventTypeAndDepartmentIdAndOutcomeAndOccurredAtAfter(String eventType, String departmentId,
+                                                                      String outcome, Instant after);
 
-    // Find events after a time
-    List<EventLog> findByRecordedAtAfterOrderByRecordedAtDesc(
-            LocalDateTime after);
+    long countByEventTypeAndOutcomeAndOccurredAtAfter(String eventType, String outcome, Instant after);
 }

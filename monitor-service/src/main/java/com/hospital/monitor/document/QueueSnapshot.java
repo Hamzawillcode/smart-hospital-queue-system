@@ -1,34 +1,30 @@
 package com.hospital.monitor.document;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
-import java.time.LocalDateTime;
+
+import java.time.Instant;
 import java.util.List;
 
+/**
+ * One document per queue.updated version: a full history of each department's
+ * queue for charts and post-incident analysis. id = "{departmentId}:{version}"
+ * makes storage idempotent.
+ *
+ * @param waitingTokens tokens only, no patient names
+ */
 @Document(collection = "queue_snapshots")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class QueueSnapshot {
-
-    @Id
-    private String id;
-
-    private String departmentId;
-
-    private int totalWaiting;
-
-    private int totalAssigned;
-
-    private double avgWaitMinutes;
-
-    // List of patient names in queue
-    // Try doing this in MySQL — nightmare
-    // In MongoDB — trivial
-    private List<String> waitingPatients;
-
-    private LocalDateTime recordedAt;
+@CompoundIndex(name = "dept_version", def = "{'departmentId': 1, 'version': -1}")
+public record QueueSnapshot(
+        @Id String id,
+        String departmentId,
+        long version,
+        String strategy,
+        int waitingCount,
+        int activeCount,
+        double avgWaitMinutes,
+        double longestWaitMinutes,
+        List<String> waitingTokens,
+        Instant occurredAt) {
 }

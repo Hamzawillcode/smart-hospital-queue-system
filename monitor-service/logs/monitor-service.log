@@ -1,8 +1,0 @@
-2026-08-25 00:30:04.529 [restartedMain] INFO 
-            com.hospital.monitor.MonitorServiceApplication - Starting MonitorServiceApplication using Java 21.0.10 with PID 10185 (/Users/hamzarouf/hospital_queue_system/monitor-service/target/classes started by hamzarouf in /Users/hamzarouf/hospital_queue_system/monitor-service)
-2026-08-25 00:30:04.531 [restartedMain] DEBUG
-            com.hospital.monitor.MonitorServiceApplication - Running with Spring Boot v3.2.5, Spring v6.1.6
-2026-08-25 00:30:04.531 [restartedMain] INFO 
-            com.hospital.monitor.MonitorServiceApplication - No active profile set, falling back to 1 default profile: "default"
-2026-08-25 00:30:05.704 [restartedMain] INFO 
-            com.hospital.monitor.MonitorServiceApplication - Started MonitorServiceApplication in 1.276 seconds (process running for 1.692)

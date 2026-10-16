@@ -1,12 +1,8 @@
 package com.hospital.patient.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import java.time.Instant;
+import java.util.List;
 
-@Data
-@AllArgsConstructor
-public class LoginResponse {
-    private String token;
-    private String username;
-    private String message;
+public record LoginResponse(String accessToken, String tokenType, Instant expiresAt,
+                            String username, List<String> roles) {
 }

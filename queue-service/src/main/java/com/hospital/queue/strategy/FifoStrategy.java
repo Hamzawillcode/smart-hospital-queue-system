@@ -1,19 +1,22 @@
 package com.hospital.queue.strategy;
 
-import com.hospital.queue.model.QueueEntry;
+import com.hospital.queue.manager.QueueItem;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.util.Comparator;
+
+/** First come, first served. */
 @Component
 public class FifoStrategy implements QueuePriorityStrategy {
 
     @Override
-    public int compare(QueueEntry a, QueueEntry b) {
-        // Earlier joinedAt = higher priority (lower position)
-        return a.getJoinedAt().compareTo(b.getJoinedAt());
+    public String name() {
+        return "FIFO";
     }
 
     @Override
-    public String getStrategyName() {
-        return "FIFO";
+    public Comparator<QueueItem> comparator(Instant now) {
+        return ARRIVAL_ORDER;
     }
 }

@@ -1,43 +1,25 @@
 package com.hospital.common.events;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.LocalDate;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class PatientCheckedInEvent {
-
-    private String eventId;        // unique event ID
-    private String patientId;
-    private String patientName;
-    private String phone;
-    private String departmentId;
-    private String tokenNumber;
-    private LocalDateTime checkinTime;
-    private LocalDateTime eventTimestamp;
-
-    // Factory method for easy creation
-    public static PatientCheckedInEvent of(
-            String patientId,
-            String patientName,
-            String phone,
-            String departmentId,
-            String tokenNumber) {
-
-        PatientCheckedInEvent event =
-                new PatientCheckedInEvent();
-        event.setEventId(java.util.UUID
-                .randomUUID().toString());
-        event.setPatientId(patientId);
-        event.setPatientName(patientName);
-        event.setPhone(phone);
-        event.setDepartmentId(departmentId);
-        event.setTokenNumber(tokenNumber);
-        event.setCheckinTime(LocalDateTime.now());
-        event.setEventTimestamp(LocalDateTime.now());
-        return event;
-    }
+/**
+ * Published by patient-service (through its outbox) after a check-in commits.
+ *
+ * @param tokenSequence per-department, per-day sequence allocated under a row lock;
+ *                      it defines the exact arrival order, so consumers never rely
+ *                      on Kafka delivery order (retries may reorder messages)
+ * @param accessCode    unguessable code the patient uses to follow their position
+ */
+public record PatientCheckedInEvent(
+        String eventId,
+        String patientId,
+        String patientName,
+        String departmentId,
+        String tokenNumber,
+        int tokenSequence,
+        LocalDate checkinDate,
+        Priority priority,
+        String accessCode,
+        Instant checkedInAt) {
 }

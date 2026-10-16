@@ -1,19 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Configuration status="WARN">
     <Properties>
-        <Property name="LOG_PATH">logs</Property>
+        <Property name="LOG_PATH">${env:LOG_PATH:-logs}</Property>
         <Property name="LOG_FILE">queue-service</Property>
-        <Property name="PATTERN">
-            %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level
-            %logger{36} - %msg%n
-        </Property>
+        <Property name="PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</Property>
     </Properties>
 
     <Appenders>
-        <Console name="ConsoleAppender" target="SYSTEM_OUT">
+        <Console name="Console" target="SYSTEM_OUT">
             <PatternLayout pattern="${PATTERN}"/>
         </Console>
-        <RollingFile name="FileAppender"
+        <RollingFile name="File"
                      fileName="${LOG_PATH}/${LOG_FILE}.log"
                      filePattern="${LOG_PATH}/${LOG_FILE}-%d{yyyy-MM-dd}-%i.log">
             <PatternLayout pattern="${PATTERN}"/>
@@ -26,21 +23,14 @@
     </Appenders>
 
     <Loggers>
-        <Logger name="com.hospital.doctor"
-                level="DEBUG" additivity="false">
-            <AppenderRef ref="ConsoleAppender"/>
-            <AppenderRef ref="FileAppender"/>
+        <Logger name="com.hospital.queue" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="File"/>
         </Logger>
-        <Logger name="org.springframework"
-                level="INFO" additivity="false">
-            <AppenderRef ref="ConsoleAppender"/>
-        </Logger>
-        <Logger name="org.hibernate.SQL"
-                level="DEBUG" additivity="false">
-            <AppenderRef ref="ConsoleAppender"/>
-        </Logger>
+        <Logger name="org.apache.kafka" level="WARN"/>
         <Root level="INFO">
-            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="File"/>
         </Root>
     </Loggers>
 </Configuration>

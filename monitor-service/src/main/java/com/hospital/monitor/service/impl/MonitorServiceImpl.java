@@ -1,288 +1,156 @@
 package com.hospital.monitor.service.impl;
 
-import com.hospital.monitor.client.DoctorServiceClient;
-import com.hospital.monitor.client.QueueServiceClient;
-import com.hospital.monitor.document.DoctorActivityLog;
-import com.hospital.monitor.document.EventLog;
+import com.hospital.common.events.DoctorReleasedEvent.ReleaseReason;
+import com.hospital.common.events.KafkaTopics;
+import com.hospital.monitor.document.DeadLetterRecord;
+import com.hospital.monitor.document.DoctorStatusView;
 import com.hospital.monitor.document.QueueSnapshot;
-import com.hospital.monitor.dto.*;
-import com.hospital.monitor.repository.DoctorActivityLogRepository;
+import com.hospital.monitor.dto.DashboardResponse;
+import com.hospital.monitor.dto.DepartmentStatsResponse;
+import com.hospital.monitor.dto.EventLogResponse;
+import com.hospital.monitor.exception.ConflictException;
+import com.hospital.monitor.exception.NotFoundException;
+import com.hospital.monitor.repository.DeadLetterRepository;
+import com.hospital.monitor.repository.DoctorStatusViewRepository;
 import com.hospital.monitor.repository.EventLogRepository;
 import com.hospital.monitor.repository.QueueSnapshotRepository;
 import com.hospital.monitor.service.MonitorService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.*;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
+/** Builds the operations dashboard purely from data in MongoDB: no synchronous calls to other services. */
 @Service
 public class MonitorServiceImpl implements MonitorService {
 
-    private static final Logger log =
-            LogManager.getLogger(MonitorServiceImpl.class);
+    private static final Logger log = LogManager.getLogger(MonitorServiceImpl.class);
+    private static final String COMPLETED = ReleaseReason.CONSULTATION_COMPLETED.name();
 
-    @Autowired
-    private EventLogRepository eventLogRepository;
+    private final EventLogRepository events;
+    private final QueueSnapshotRepository snapshots;
+    private final DoctorStatusViewRepository doctorStatus;
+    private final DeadLetterRepository deadLetters;
+    private final MongoTemplate mongo;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final Clock clock;
+    private final ZoneId hospitalZone;
 
-    @Autowired
-    private QueueSnapshotRepository snapshotRepository;
-
-    @Autowired
-    private DoctorActivityLogRepository doctorLogRepository;
-
-    @Autowired
-    private QueueServiceClient queueClient;
-
-    @Autowired
-    private DoctorServiceClient doctorClient;
-
-    // ─────────────────────────────────────────
-    // LOG EVENT
-    // ─────────────────────────────────────────
-    @Override
-    public void logEvent(LogEventRequest request) {
-        log.debug("Logging event: {} from: {}",
-                request.getEventType(),
-                request.getSourceService());
-
-        EventLog eventLog = new EventLog(
-                null,
-                request.getEventType(),
-                request.getSourceService(),
-                request.getPayload(),
-                request.getDepartmentId(),
-                request.getPatientId(),
-                LocalDateTime.now()
-        );
-
-        eventLogRepository.save(eventLog);
-
-        log.info("Event logged: {} for patient: {}",
-                request.getEventType(),
-                request.getPatientId());
+    public MonitorServiceImpl(EventLogRepository events, QueueSnapshotRepository snapshots,
+                              DoctorStatusViewRepository doctorStatus, DeadLetterRepository deadLetters,
+                              MongoTemplate mongo, KafkaTemplate<String, String> kafkaTemplate, Clock clock,
+                              @Value("${hospital.time-zone}") ZoneId hospitalZone) {
+        this.events = events;
+        this.snapshots = snapshots;
+        this.doctorStatus = doctorStatus;
+        this.deadLetters = deadLetters;
+        this.mongo = mongo;
+        this.kafkaTemplate = kafkaTemplate;
+        this.clock = clock;
+        this.hospitalZone = hospitalZone;
     }
 
-    // ─────────────────────────────────────────
-    // GET DASHBOARD
-    // ─────────────────────────────────────────
     @Override
     public DashboardResponse getDashboard() {
-        log.info("Building dashboard response");
-
-        // Today's start time
-        LocalDateTime todayStart = LocalDateTime.of(
-                LocalDate.now(), LocalTime.MIDNIGHT);
-
-        // Count today's events
-        long totalEventsToday = eventLogRepository
-                .countByRecordedAtAfter(todayStart);
-
-        // Count today's patient checkins
-        long totalPatientsToday = eventLogRepository
-                .findByEventTypeOrderByRecordedAtDesc(
-                        "PATIENT_CHECKED_IN")
-                .stream()
-                .filter(e -> e.getRecordedAt()
-                        .isAfter(todayStart))
-                .count();
-
-        // Queue sizes per department
-        Map<String, Integer> queueSizes = new HashMap<>();
-        List<String> departments = List.of(
-                "OPD", "EMERGENCY", "CARDIOLOGY");
-
-        for (String dept : departments) {
-            Map queueStatus = queueClient
-                    .getQueueStatus(dept);
-            Object waiting = queueStatus
-                    .get("totalWaiting");
-            queueSizes.put(dept,
-                    waiting != null
-                            ? ((Number) waiting).intValue()
-                            : 0);
-        }
-
-        // Available doctors per department
-        Map<String, Long> availableDoctors = new HashMap<>();
-        for (String dept : departments) {
-            List docs = doctorClient
-                    .getAvailableDoctors(dept);
-            availableDoctors.put(dept,
-                    (long) docs.size());
-        }
-
-        // Recent 10 events
-        List<EventLogResponse> recentEvents =
-                getRecentEvents(10);
-
-        log.info("Dashboard built: {} events today, " +
-                        "{} patients today",
-                totalEventsToday, totalPatientsToday);
+        Instant startOfDay = startOfToday();
+        TreeSet<String> departments = new TreeSet<>(
+                mongo.findDistinct(new Query(), "departmentId", QueueSnapshot.class, String.class));
+        departments.addAll(mongo.findDistinct(new Query(), "departmentId", DoctorStatusView.class, String.class));
 
         return new DashboardResponse(
-                totalPatientsToday,
-                totalEventsToday,
-                queueSizes,
-                availableDoctors,
-                recentEvents
-        );
+                Instant.now(clock),
+                events.countByEventTypeAndOccurredAtAfter(KafkaTopics.PATIENT_CHECKED_IN, startOfDay),
+                events.countByEventTypeAndOutcomeAndOccurredAtAfter(KafkaTopics.DOCTOR_RELEASED, COMPLETED, startOfDay),
+                deadLetters.countByStatus(DeadLetterRecord.Status.NEW),
+                departments.stream().map(this::getDepartmentStats).toList(),
+                getRecentEvents(10));
     }
 
-    // ─────────────────────────────────────────
-    // GET DEPARTMENT STATS
-    // ─────────────────────────────────────────
     @Override
-    public DepartmentStatsResponse getDepartmentStats(
-            String departmentId) {
-
-        log.debug("Getting stats for dept: {}", departmentId);
-
-        // Get live queue data
-        Map queueStatus = queueClient
-                .getQueueStatus(departmentId);
-
-        int waiting = queueStatus.get("totalWaiting") != null
-                ? ((Number) queueStatus
-                .get("totalWaiting")).intValue()
-                : 0;
-
-        int assigned = queueStatus.get("totalAssigned") != null
-                ? ((Number) queueStatus
-                .get("totalAssigned")).intValue()
-                : 0;
-
-        // Get available doctors
-        List availableDocs = doctorClient
-                .getAvailableDoctors(departmentId);
-
-        // Get latest snapshot for avg wait
-        double avgWait = snapshotRepository
-                .findTopByDepartmentIdOrderByRecordedAtDesc(
-                        departmentId)
-                .map(QueueSnapshot::getAvgWaitMinutes)
-                .orElse(0.0);
-
-        // Count served today
-        LocalDateTime todayStart = LocalDateTime.of(
-                LocalDate.now(), LocalTime.MIDNIGHT);
-        long servedToday = eventLogRepository
-                .findByDepartmentIdOrderByRecordedAtDesc(
-                        departmentId)
-                .stream()
-                .filter(e -> e.getEventType()
-                        .equals("CONSULTATION_DONE")
-                        && e.getRecordedAt()
-                        .isAfter(todayStart))
-                .count();
-
+    public DepartmentStatsResponse getDepartmentStats(String departmentId) {
+        Instant startOfDay = startOfToday();
+        Optional<QueueSnapshot> latest = snapshots.findTopByDepartmentIdOrderByVersionDesc(departmentId);
+        Map<String, Long> doctors = doctorStatus.findByDepartmentIdOrderByDoctorNameAsc(departmentId).stream()
+                .collect(Collectors.groupingBy(DoctorStatusView::status, TreeMap::new, Collectors.counting()));
         return new DepartmentStatsResponse(
                 departmentId,
-                waiting,
-                assigned,
-                availableDocs.size(),
-                avgWait,
-                servedToday
-        );
+                latest.map(QueueSnapshot::strategy).orElse(null),
+                latest.map(QueueSnapshot::version).orElse(0L),
+                latest.map(QueueSnapshot::waitingCount).orElse(0),
+                latest.map(QueueSnapshot::activeCount).orElse(0),
+                latest.map(QueueSnapshot::avgWaitMinutes).orElse(0.0),
+                latest.map(QueueSnapshot::longestWaitMinutes).orElse(0.0),
+                doctors,
+                events.countByEventTypeAndDepartmentIdAndOccurredAtAfter(KafkaTopics.PATIENT_CHECKED_IN,
+                        departmentId, startOfDay),
+                events.countByEventTypeAndDepartmentIdAndOutcomeAndOccurredAtAfter(KafkaTopics.DOCTOR_RELEASED,
+                        departmentId, COMPLETED, startOfDay),
+                latest.map(QueueSnapshot::occurredAt).orElse(null));
     }
 
-    // ─────────────────────────────────────────
-    // GET RECENT EVENTS
-    // ─────────────────────────────────────────
+    @Override
+    public List<QueueSnapshot> getSnapshotHistory(String departmentId, int limit) {
+        return snapshots.findByDepartmentIdOrderByVersionDesc(departmentId, PageRequest.of(0, clamp(limit, 500)));
+    }
+
     @Override
     public List<EventLogResponse> getRecentEvents(int limit) {
-        log.debug("Fetching recent {} events", limit);
-
-        return eventLogRepository
-                .findTop10ByOrderByRecordedAtDesc()
-                .stream()
-                .limit(limit)
-                .map(this::mapToEventResponse)
-                .collect(Collectors.toList());
+        return events.findByOrderByOccurredAtDesc(PageRequest.of(0, clamp(limit, 100))).stream()
+                .map(EventLogResponse::from).toList();
     }
 
-    // ─────────────────────────────────────────
-    // GET PATIENT HISTORY
-    // ─────────────────────────────────────────
     @Override
-    public List<EventLogResponse> getPatientHistory(
-            String patientId) {
-
-        log.debug("Fetching history for patient: {}",
-                patientId);
-
-        return eventLogRepository
-                .findByPatientIdOrderByRecordedAtDesc(patientId)
-                .stream()
-                .map(this::mapToEventResponse)
-                .collect(Collectors.toList());
+    public List<EventLogResponse> getPatientHistory(String patientId) {
+        return events.findByPatientIdOrderByOccurredAtAsc(patientId).stream().map(EventLogResponse::from).toList();
     }
 
-    // ─────────────────────────────────────────
-    // TAKE QUEUE SNAPSHOT
-    // ─────────────────────────────────────────
     @Override
-    public void takeQueueSnapshot(String departmentId) {
-        log.info("Taking queue snapshot for dept: {}",
-                departmentId);
+    public List<DeadLetterRecord> getDeadLetters(DeadLetterRecord.Status status) {
+        return deadLetters.findByStatusOrderByReceivedAtDesc(status);
+    }
 
-        Map queueStatus = queueClient
-                .getQueueStatus(departmentId);
-
-        int totalWaiting = queueStatus
-                .get("totalWaiting") != null
-                ? ((Number) queueStatus
-                .get("totalWaiting")).intValue()
-                : 0;
-
-        // Extract patient names from queue
-        List<String> patientNames = new ArrayList<>();
-        Object queueList = queueStatus.get("queue");
-        if (queueList instanceof List) {
-            ((List<Map>) queueList).forEach(entry -> {
-                Object name = entry.get("patientName");
-                if (name != null) {
-                    patientNames.add(name.toString());
-                }
-            });
+    @Override
+    public DeadLetterRecord replayDeadLetter(String id) {
+        DeadLetterRecord record = deadLetters.findById(id)
+                .orElseThrow(() -> new NotFoundException("Dead letter not found: " + id));
+        if (record.status() == DeadLetterRecord.Status.REPLAYED) {
+            throw new ConflictException("Dead letter " + id + " was already replayed");
         }
-
-        // Estimate avg wait (5 mins per position)
-        double avgWait = totalWaiting * 5.0 / 2;
-
-        QueueSnapshot snapshot = new QueueSnapshot(
-                null,
-                departmentId,
-                totalWaiting,
-                0,
-                avgWait,
-                patientNames,
-                LocalDateTime.now()
-        );
-
-        snapshotRepository.save(snapshot);
-        log.info("Snapshot saved for dept: {} " +
-                        "with {} waiting",
-                departmentId, totalWaiting);
+        try {
+            kafkaTemplate.send(record.originalTopic(), record.messageKey(), record.payload()).get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while replaying " + id, e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("Kafka unavailable, dead letter " + id + " not replayed", e);
+        }
+        log.info("Replayed dead letter {} to {}", id, record.originalTopic());
+        return deadLetters.save(record.replayed(Instant.now(clock)));
     }
 
-    // ─────────────────────────────────────────
-    // PRIVATE MAPPER
-    // ─────────────────────────────────────────
-    private EventLogResponse mapToEventResponse(
-            EventLog log) {
-        return new EventLogResponse(
-                log.getEventType(),
-                log.getSourceService(),
-                log.getDepartmentId(),
-                log.getPatientId(),
-                log.getPayload(),
-                log.getRecordedAt()
-        );
+    private Instant startOfToday() {
+        return LocalDate.now(clock.withZone(hospitalZone)).atStartOfDay(hospitalZone).toInstant();
+    }
+
+    private static int clamp(int value, int max) {
+        return Math.max(1, Math.min(value, max));
     }
 }

@@ -1,0 +1,174 @@
+# Full stack: infrastructure + all services.
+#   cp .env.example .env   # then change every value
+#   docker compose up --build
+# Of the services, only the API gateway (8080) and the Eureka dashboard (8761) are
+# published to the host, so nothing can bypass the gateway. MySQL, MongoDB and Kafka
+# are published on localhost for running services from the IDE.
+name: hospital-queue
+
+x-service: &service
+  restart: unless-stopped
+  environment: &service-env
+    JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    EUREKA_URL: http://eureka-server:8761/eureka/
+    KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    MYSQL_HOST: mysql
+    MYSQL_PORT: "3306"
+    HOSPITAL_TIME_ZONE: ${HOSPITAL_TIME_ZONE:-Asia/Kolkata}
+  depends_on: &service-deps
+    eureka-server:
+      condition: service_started
+    kafka:
+      condition: service_healthy
+
+services:
+
+  mysql:
+    image: mysql:8.0.36
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      PATIENT_DB_PASSWORD: ${PATIENT_DB_PASSWORD:?set PATIENT_DB_PASSWORD in .env}
+      QUEUE_DB_PASSWORD: ${QUEUE_DB_PASSWORD:?set QUEUE_DB_PASSWORD in .env}
+      DOCTOR_DB_PASSWORD: ${DOCTOR_DB_PASSWORD:?set DOCTOR_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:3307:3306"   # localhost only; 3307 avoids clashing with a local MySQL
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:7.0.12
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"   # for running services from the IDE against this broker
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    profiles: ["tools"]   # docker compose --profile tools up
+    depends_on:
+      - kafka
+    ports:
+      - "9090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  eureka-server:
+    build: { context: ., args: { SERVICE: eureka-server } }
+    restart: unless-stopped
+    ports:
+      - "8761:8761"
+
+  api-gateway:
+    <<: *service
+    build: { context: ., args: { SERVICE: api-gateway } }
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *service-env
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+    depends_on:
+      eureka-server:
+        condition: service_started
+
+  patient-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: patient-service } }
+    environment:
+      <<: *service-env
+      PATIENT_DB_PASSWORD: ${PATIENT_DB_PASSWORD}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      STAFF_PASSWORD: ${STAFF_PASSWORD:?set STAFF_PASSWORD in .env}
+      DOCTOR_PASSWORD: ${DOCTOR_PASSWORD:?set DOCTOR_PASSWORD in .env}
+    depends_on:
+      <<: *service-deps
+      mysql:
+        condition: service_healthy
+
+  queue-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: queue-service } }
+    environment:
+      <<: *service-env
+      QUEUE_DB_PASSWORD: ${QUEUE_DB_PASSWORD}
+    depends_on:
+      <<: *service-deps
+      mysql:
+        condition: service_healthy
+
+  doctor-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: doctor-service } }
+    environment:
+      <<: *service-env
+      DOCTOR_DB_PASSWORD: ${DOCTOR_DB_PASSWORD}
+    depends_on:
+      <<: *service-deps
+      mysql:
+        condition: service_healthy
+
+  notification-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: notification-service } }
+    environment:
+      <<: *service-env
+      NOTIFICATION_ALLOWED_ORIGINS: http://localhost:8080
+
+  monitor-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: monitor-service } }
+    environment:
+      <<: *service-env
+      MONGODB_URI: mongodb://mongo:27017/hospital_monitor
+    depends_on:
+      <<: *service-deps
+      mongo:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  mongo-data:

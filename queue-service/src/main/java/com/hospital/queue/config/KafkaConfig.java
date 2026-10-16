@@ -1,140 +1,62 @@
 package com.hospital.queue.config;
 
-import com.hospital.common.events.DoctorAssignedEvent;
-import com.hospital.common.events.PatientCheckedInEvent;
-import com.hospital.common.events.QueueUpdatedEvent;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hospital.common.events.KafkaTopics;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.config.TopicConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.config
-        .ConcurrentKafkaListenerContainerFactory;
-import org.springframework.kafka.core.*;
-import org.springframework.kafka.support.serializer
-        .JsonDeserializer;
-import org.springframework.kafka.support.serializer
-        .JsonSerializer;
-import java.util.HashMap;
-import java.util.Map;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.support.converter.RecordMessageConverter;
+import org.springframework.kafka.support.converter.StringJsonMessageConverter;
 
+/**
+ * Kafka wiring.
+ *
+ * Values travel as JSON strings. Producers send the JSON written to the outbox;
+ * consumers receive a String and {@link StringJsonMessageConverter} converts it to
+ * the listener's parameter type. Because the record value is always a String,
+ * retry and dead-letter republishing work with Boot's default String KafkaTemplate,
+ * and a malformed payload fails conversion and goes straight to the DLT
+ * (conversion errors are non-retryable).
+ */
 @Configuration
 public class KafkaConfig {
 
-    @Value("${spring.kafka.bootstrap-servers}")
-    private String bootstrapServers;
+    @Value("${kafka.topics.partitions}")
+    private int partitions;
 
-    // ─────────────────────────────────────────
-    // CONSUMER — PatientCheckedInEvent
-    // ─────────────────────────────────────────
+    @Value("${kafka.topics.replicas}")
+    private int replicas;
+
     @Bean
-    public ConsumerFactory<String, PatientCheckedInEvent>
-    patientEventConsumerFactory() {
+    public RecordMessageConverter recordMessageConverter(ObjectMapper objectMapper) {
+        return new StringJsonMessageConverter(objectMapper);
+    }
 
-        Map<String, Object> config = new HashMap<>();
-        config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                bootstrapServers);
-        config.put(ConsumerConfig.GROUP_ID_CONFIG,
-                "queue-service-group");
-        config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
-                "earliest");
-        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
-                StringDeserializer.class);
-        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-                JsonDeserializer.class);
-        config.put(JsonDeserializer.TRUSTED_PACKAGES,
-                "com.hospital.common.events");
-        config.put(JsonDeserializer.VALUE_DEFAULT_TYPE,
-                PatientCheckedInEvent.class.getName());
-
-        return new DefaultKafkaConsumerFactory<>(config);
+    /**
+     * Compacted: Kafka keeps at least the latest snapshot per department, so a
+     * notification instance starting with a fresh consumer group can rebuild
+     * its view from the topic itself.
+     */
+    @Bean
+    public NewTopic queueUpdatedTopic() {
+        return TopicBuilder.name(KafkaTopics.QUEUE_UPDATED)
+                .partitions(partitions)
+                .replicas(replicas)
+                .config(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT)
+                .config(TopicConfig.MIN_COMPACTION_LAG_MS_CONFIG, "3600000")
+                .build();
     }
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String,
-            PatientCheckedInEvent>
-    patientCheckedInListenerFactory() {
-
-        ConcurrentKafkaListenerContainerFactory<String,
-                PatientCheckedInEvent> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(
-                patientEventConsumerFactory());
-        // 3 concurrent consumers = 3 partitions
-        factory.setConcurrency(3);
-        return factory;
-    }
-
-    // ─────────────────────────────────────────
-    // PRODUCER — QueueUpdatedEvent
-    // ─────────────────────────────────────────
-    @Bean
-    public ProducerFactory<String, QueueUpdatedEvent>
-    queueUpdatedProducerFactory() {
-
-        Map<String, Object> config = new HashMap<>();
-        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                bootstrapServers);
-        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                StringSerializer.class);
-        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                JsonSerializer.class);
-        config.put(ProducerConfig.ACKS_CONFIG, "all");
-        config.put(ProducerConfig.RETRIES_CONFIG, 3);
-
-        return new DefaultKafkaProducerFactory<>(config);
+    public NewTopic doctorRequestedTopic() {
+        return TopicBuilder.name(KafkaTopics.DOCTOR_REQUESTED).partitions(partitions).replicas(replicas).build();
     }
 
     @Bean
-    public KafkaTemplate<String, QueueUpdatedEvent>
-    queueUpdatedTemplate() {
-        return new KafkaTemplate<>(
-                queueUpdatedProducerFactory());
-    }
-
-    // ─────────────────────────────────────────
-    // PRODUCER — DoctorAssignedEvent
-    // ─────────────────────────────────────────
-    @Bean
-    public ProducerFactory<String, DoctorAssignedEvent>
-    doctorAssignedProducerFactory() {
-
-        Map<String, Object> config = new HashMap<>();
-        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                bootstrapServers);
-        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                StringSerializer.class);
-        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                JsonSerializer.class);
-        config.put(ProducerConfig.ACKS_CONFIG, "all");
-
-        return new DefaultKafkaProducerFactory<>(config);
-    }
-
-    @Bean
-    public KafkaTemplate<String, DoctorAssignedEvent>
-    doctorAssignedTemplate() {
-        return new KafkaTemplate<>(
-                doctorAssignedProducerFactory());
-    }
-    // ─────────────────────────────────────────
-    // PRODUCER — Default (Required for @RetryableTopic)
-    // ─────────────────────────────────────────
-    @Bean
-    public ProducerFactory<String, Object> defaultRetryProducerFactory() {
-        Map<String, Object> config = new HashMap<>();
-        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
-        config.put(ProducerConfig.ACKS_CONFIG, "all");
-        return new DefaultKafkaProducerFactory<>(config);
-    }
-
-    // Notice the exact Bean name here!
-    @Bean(name = "defaultRetryTopicKafkaTemplate")
-    public KafkaTemplate<String, Object> defaultRetryTopicKafkaTemplate() {
-        return new KafkaTemplate<>(defaultRetryProducerFactory());
+    public NewTopic doctorReleasedTopic() {
+        return TopicBuilder.name(KafkaTopics.DOCTOR_RELEASED).partitions(partitions).replicas(replicas).build();
     }
 }

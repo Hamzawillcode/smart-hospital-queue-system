@@ -1,459 +1,467 @@
 package com.hospital.queue.service.impl;
 
+import com.hospital.common.events.DoctorAssignedEvent;
+import com.hospital.common.events.DoctorReleasedEvent;
+import com.hospital.common.events.DoctorReleasedEvent.ReleaseReason;
+import com.hospital.common.events.DoctorRequestedEvent;
+import com.hospital.common.events.KafkaTopics;
+import com.hospital.common.events.PatientCheckedInEvent;
+import com.hospital.common.events.Priority;
 import com.hospital.common.events.QueueUpdatedEvent;
-import com.hospital.queue.client.DoctorServiceClient;
-import com.hospital.queue.client.MonitorClient;
-import com.hospital.queue.dto.*;
-import com.hospital.queue.exception.PatientAlreadyInQueueException;
+import com.hospital.queue.config.QueueProperties;
+import com.hospital.queue.dto.QueueEntryResponse;
+import com.hospital.queue.dto.QueueStatusResponse;
+import com.hospital.queue.exception.ConflictException;
 import com.hospital.queue.exception.QueueEntryNotFoundException;
-import com.hospital.queue.kafka.QueueEventProducer;
+import com.hospital.queue.factory.QueueStrategyFactory;
+import com.hospital.queue.manager.DepartmentSnapshot;
+import com.hospital.queue.manager.QueueItem;
 import com.hospital.queue.manager.QueueManager;
+import com.hospital.queue.model.QueueDepartment;
 import com.hospital.queue.model.QueueEntry;
 import com.hospital.queue.model.QueueStatus;
+import com.hospital.queue.outbox.OutboxWriter;
+import com.hospital.queue.repository.QueueDepartmentRepository;
 import com.hospital.queue.repository.QueueEntryRepository;
 import com.hospital.queue.service.QueueService;
-import jakarta.annotation.PostConstruct;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 
-import java.time.LocalDateTime;
-import java.util.*;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+/**
+ * Queue state machine for one department:
+ * <pre>
+ *  WAITING ──dispatch──▶ AWAITING_DOCTOR ──doctor.assigned──▶ IN_CONSULTATION ──complete──▶ DONE
+ *     │                        │
+ *     └──────── leave ─────────┴──▶ LEFT
+ * </pre>
+ *
+ * Every change runs through {@link #mutate}:
+ * <ol>
+ *   <li>take the department's in-JVM ReentrantLock (other departments proceed in parallel);</li>
+ *   <li>start a transaction and lock the department row (SELECT ... FOR UPDATE), which
+ *       serialises the department across all service instances;</li>
+ *   <li>reload memory from MySQL if another instance changed the department meanwhile;</li>
+ *   <li>apply the change, call the next patient if no doctor request is outstanding,
+ *       and write the resulting events to the outbox in the same transaction;</li>
+ *   <li>commit, then install the new immutable snapshot in memory, then release the lock.</li>
+ * </ol>
+ * If anything fails before the commit, the transaction rolls back and memory is untouched.
+ */
 @Service
 public class QueueServiceImpl implements QueueService {
 
     private static final Logger log = LogManager.getLogger(QueueServiceImpl.class);
+    private static final List<QueueStatus> ACTIVE = List.of(QueueStatus.AWAITING_DOCTOR, QueueStatus.IN_CONSULTATION);
 
-    @Autowired
-    private QueueEntryRepository queueRepository;
+    private final QueueEntryRepository entries;
+    private final QueueDepartmentRepository departments;
+    private final QueueManager queueManager;
+    private final QueueStrategyFactory strategyFactory;
+    private final OutboxWriter outbox;
+    private final TransactionTemplate transactionTemplate;
+    private final QueueProperties properties;
+    private final Clock clock;
 
-    @Autowired
-    private QueueManager queueManager;
-
-    @Autowired
-    private DoctorServiceClient doctorClient;
-
-    @Autowired
-    private MonitorClient monitorClient;
-
-    @Autowired
-    private QueueEventProducer queueEventProducer;
-
-    // ─────────────────────────────────────────
-    // LOAD FROM DB ON STARTUP
-    // ─────────────────────────────────────────
-    @PostConstruct
-    public void initializeQueues() {
-        log.info("Initializing queues from DB...");
-        List<QueueEntry> waiting = queueRepository.findAll()
-                .stream()
-                .filter(e -> e.getStatus() == QueueStatus.WAITING)
-                .collect(Collectors.toList());
-
-        Map<String, List<QueueEntry>> byDept = waiting
-                .stream()
-                .collect(Collectors.groupingBy(QueueEntry::getDepartmentId));
-
-        byDept.forEach(queueManager::loadQueue);
-        log.info("Queues initialized: {}", byDept.keySet());
+    public QueueServiceImpl(QueueEntryRepository entries,
+                            QueueDepartmentRepository departments,
+                            QueueManager queueManager,
+                            QueueStrategyFactory strategyFactory,
+                            OutboxWriter outbox,
+                            TransactionTemplate queueTransactionTemplate,
+                            QueueProperties properties,
+                            Clock clock) {
+        this.entries = entries;
+        this.departments = departments;
+        this.queueManager = queueManager;
+        this.strategyFactory = strategyFactory;
+        this.outbox = outbox;
+        this.transactionTemplate = queueTransactionTemplate;
+        this.properties = properties;
+        this.clock = clock;
     }
 
-    // ─────────────────────────────────────────
-    // ADD TO QUEUE
-    // ─────────────────────────────────────────
+    // ───────────────────────────── commands ─────────────────────────────
+
     @Override
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public QueueEntryResponse addToQueue(AddToQueueRequest request) {
+    public void enqueue(PatientCheckedInEvent event) {
+        requireText(event.patientId(), "patientId");
+        requireText(event.departmentId(), "departmentId");
+        requireText(event.tokenNumber(), "tokenNumber");
+        requireText(event.accessCode(), "accessCode");
 
-        log.info("Adding: {} to {} queue",
-                request.getPatientName(),
-                request.getDepartmentId());
-
-        // 1. Check duplicate
-        Optional<QueueEntry> existing = queueRepository
-                .findByPatientIdAndStatus(
-                        request.getPatientId(),
-                        QueueStatus.WAITING);
-
-        if (existing.isPresent()) {
-            log.warn("Patient already in queue: {}", request.getPatientId());
-            throw new PatientAlreadyInQueueException(request.getPatientId());
-        }
-
-        // 2. Build entry
-        QueueEntry entry = new QueueEntry();
-        entry.setPatientId(request.getPatientId());
-        entry.setPatientName(request.getPatientName());
-        entry.setDepartmentId(request.getDepartmentId());
-        entry.setTokenNumber(request.getTokenNumber());
-        entry.setStatus(QueueStatus.WAITING);
-        entry.setJoinedAt(LocalDateTime.now());
-        entry.setPosition(0);
-
-        // 3. Add to in-memory queue (thread-safe)
-        int position = queueManager.addToQueue(entry);
-        entry.setPosition(position);
-
-        // 4. Save to DB
-        QueueEntry saved = queueRepository.save(entry);
-
-        log.info("Patient {} at position {} in {}",
-                request.getPatientName(),
-                position,
-                request.getDepartmentId());
-
-        // 5. Build complete queue snapshot for Kafka event
-        List<QueueUpdatedEvent.QueueEntrySnapshot> snapshots =
-                queueManager.getQueueSnapshot(request.getDepartmentId())
-                        .stream()
-                        .map(e -> new QueueUpdatedEvent.QueueEntrySnapshot(
-                                e.getPatientId(),
-                                e.getPatientName(),
-                                e.getTokenNumber(),
-                                e.getPosition() != null ? e.getPosition() : 0,
-                                e.getPosition() != null ? (e.getPosition() - 1) * 5 : 0
-                        ))
-                        .collect(Collectors.toList());
-
-        // First patient in queue
-        String firstId = snapshots.isEmpty() ? null : snapshots.get(0).getPatientId();
-        String firstToken = snapshots.isEmpty() ? null : snapshots.get(0).getTokenNumber();
-
-        // 6. Publish to Kafka — notification-service and monitor-service consume this
-        queueEventProducer.publishQueueUpdated(
-                request.getDepartmentId(),
-                snapshots.size(),
-                firstId,
-                firstToken,
-                snapshots
-        );
-
-        log.info("queue.updated published: dept={} patients={}",
-                request.getDepartmentId(), snapshots.size());
-
-        // 7. If this patient is at position 1 — publish event to assign doctor
-        if (position == 1) {
-            tryAssignDoctorViaKafka(saved);
-        }
-
-        return mapToResponse(saved);
+        mutate(event.departmentId(), m -> {
+            // Redelivery (outbox retry, consumer rebalance, retry topic) must not queue a patient twice.
+            // The check runs under the department row lock; the unique key on patient_id backs it up.
+            if (entries.existsByPatientId(event.patientId())) {
+                log.info("Ignoring duplicate patient.checked-in for patient {}", event.patientId());
+                return false;
+            }
+            QueueEntry entry = new QueueEntry();
+            entry.setId(UUID.randomUUID().toString());
+            entry.setPatientId(event.patientId());
+            entry.setPatientName(event.patientName() == null ? "" : event.patientName());
+            entry.setDepartmentId(event.departmentId());
+            entry.setTokenNumber(event.tokenNumber());
+            entry.setTokenSequence(event.tokenSequence());
+            entry.setCheckinDate(event.checkinDate() != null ? event.checkinDate() : LocalDate.now(clock));
+            entry.setPriority(event.priority() != null ? event.priority() : Priority.NORMAL);
+            entry.setAccessCode(event.accessCode());
+            entry.setStatus(QueueStatus.WAITING);
+            entry.setJoinedAt(event.checkedInAt() != null ? event.checkedInAt() : now());
+            entries.save(entry);
+            m.waiting.add(toItem(entry));
+            log.info("Patient {} ({}) joined {} queue", entry.getPatientId(), entry.getTokenNumber(),
+                    entry.getDepartmentId());
+            return true;
+        });
     }
 
-    // ─────────────────────────────────────────
-    // CALL NEXT PATIENT
-    // ─────────────────────────────────────────
     @Override
-    @Transactional(isolation = Isolation.REPEATABLE_READ)
-    public QueueEntryResponse callNextPatient(String departmentId) {
+    public void onDoctorAssigned(DoctorAssignedEvent event) {
+        requireText(event.requestId(), "requestId");
+        requireText(event.departmentId(), "departmentId");
+        requireText(event.doctorId(), "doctorId");
 
-        log.info("Calling next patient for dept: {}", departmentId);
+        mutate(event.departmentId(), m -> {
+            boolean wasPending = event.requestId().equals(m.department.getPendingRequestId());
+            Optional<QueueEntry> found = entries.findById(event.requestId());
 
-        Optional<QueueEntry> nextOpt = queueManager.removeNext(departmentId);
+            if (found.isPresent() && found.get().getStatus() == QueueStatus.AWAITING_DOCTOR) {
+                QueueEntry entry = found.get();
+                entry.setStatus(QueueStatus.IN_CONSULTATION);
+                entry.setDoctorId(event.doctorId());
+                entry.setDoctorName(event.doctorName());
+                entry.setRoomNumber(event.roomNumber());
+                entry.setAssignedAt(event.assignedAt() != null ? event.assignedAt() : now());
+                if (wasPending) {
+                    m.department.setPendingRequestId(null);
+                }
+                log.info("Doctor {} assigned to patient {} in {}", event.doctorId(), entry.getPatientId(),
+                        entry.getDepartmentId());
+                return true;
+            }
 
-        if (nextOpt.isEmpty()) {
-            throw new QueueEntryNotFoundException("No patients waiting in: " + departmentId);
-        }
+            if (found.isPresent()
+                    && found.get().getStatus() == QueueStatus.IN_CONSULTATION
+                    && Objects.equals(found.get().getDoctorId(), event.doctorId())) {
+                log.info("Ignoring duplicate doctor.assigned for request {}", event.requestId());
+                return false;
+            }
 
-        QueueEntry next = nextOpt.get();
-
-        // Update status in DB
-        QueueEntry dbEntry = queueRepository.findById(next.getQueueId())
-                .orElseThrow(() -> new QueueEntryNotFoundException(next.getQueueId()));
-
-        dbEntry.setStatus(QueueStatus.ASSIGNED);
-        dbEntry.setAssignedAt(LocalDateTime.now());
-        QueueEntry updated = queueRepository.save(dbEntry);
-
-        // Sync positions to DB
-        syncPositionsToDB(departmentId);
-
-        // Rebuild snapshot after removal
-        List<QueueUpdatedEvent.QueueEntrySnapshot> snapshots =
-                queueManager.getQueueSnapshot(departmentId)
-                        .stream()
-                        .map(e -> new QueueUpdatedEvent.QueueEntrySnapshot(
-                                e.getPatientId(),
-                                e.getPatientName(),
-                                e.getTokenNumber(),
-                                e.getPosition() != null ? e.getPosition() : 0,
-                                e.getPosition() != null ? (e.getPosition() - 1) * 5 : 0
-                        ))
-                        .collect(Collectors.toList());
-
-        String firstId = snapshots.isEmpty() ? null : snapshots.get(0).getPatientId();
-        String firstToken = snapshots.isEmpty() ? null : snapshots.get(0).getTokenNumber();
-
-        // Publish updated queue state
-        queueEventProducer.publishQueueUpdated(
-                departmentId,
-                snapshots.size(),
-                firstId,
-                firstToken,
-                snapshots
-        );
-
-        log.info("queue.updated published after callNext: dept={} remaining={}",
-                departmentId, snapshots.size());
-
-        // Try to assign a doctor
-        tryAssignDoctorViaKafka(updated);
-
-        log.info("Next patient called: {} dept: {}", next.getPatientName(), departmentId);
-
-        return mapToResponse(updated);
+            // The patient left, finished, or the request is unknown: give the doctor back.
+            log.warn("Rejecting doctor.assigned for request {} (entry status {}); releasing doctor {}",
+                    event.requestId(), found.map(QueueEntry::getStatus).orElse(null), event.doctorId());
+            releaseDoctor(event.requestId(), event.patientId(), event.doctorId(), event.departmentId(),
+                    ReleaseReason.ASSIGNMENT_REJECTED);
+            if (wasPending) {
+                m.department.setPendingRequestId(null);
+                return true;
+            }
+            return false;
+        });
     }
 
-    // ─────────────────────────────────────────
-    // GET QUEUE STATUS
-    // ─────────────────────────────────────────
+    @Override
+    public QueueEntryResponse completeConsultation(String patientId) {
+        String departmentId = departmentOfPatient(patientId);
+        mutate(departmentId, m -> {
+            QueueEntry entry = entries.findByPatientId(patientId)
+                    .orElseThrow(() -> new QueueEntryNotFoundException("No queue entry for patient " + patientId));
+            if (entry.getStatus() != QueueStatus.IN_CONSULTATION) {
+                throw new ConflictException("Patient " + patientId + " is not in consultation (status "
+                        + entry.getStatus() + ")");
+            }
+            entry.setStatus(QueueStatus.DONE);
+            entry.setCompletedAt(now());
+            releaseDoctor(entry.getId(), patientId, entry.getDoctorId(), departmentId,
+                    ReleaseReason.CONSULTATION_COMPLETED);
+            return true;
+        });
+        return getPatientQueueInfo(patientId);
+    }
+
+    @Override
+    public QueueEntryResponse leaveQueue(String patientId) {
+        String departmentId = departmentOfPatient(patientId);
+        mutate(departmentId, m -> {
+            QueueEntry entry = entries.findByPatientId(patientId)
+                    .orElseThrow(() -> new QueueEntryNotFoundException("No queue entry for patient " + patientId));
+            switch (entry.getStatus()) {
+                case WAITING -> m.waiting.removeIf(item -> item.patientId().equals(patientId));
+                case AWAITING_DOCTOR -> {
+                    if (entry.getId().equals(m.department.getPendingRequestId())) {
+                        m.department.setPendingRequestId(null);
+                    }
+                }
+                default -> throw new ConflictException("Patient " + patientId + " cannot leave in status "
+                        + entry.getStatus());
+            }
+            // Cancels a pending request, frees a doctor assigned in the meantime, and tells
+            // patient-service the visit ended. doctor-service ignores unknown request ids.
+            releaseDoctor(entry.getId(), patientId, null, departmentId, ReleaseReason.PATIENT_LEFT);
+            entry.setStatus(QueueStatus.LEFT);
+            entry.setCompletedAt(now());
+            return true;
+        });
+        return getPatientQueueInfo(patientId);
+    }
+
+    @Override
+    public QueueStatusResponse dispatchNext(String departmentId) {
+        if (!departments.existsById(departmentId)) {
+            throw new QueueEntryNotFoundException("Unknown department " + departmentId);
+        }
+        mutate(departmentId, m -> {
+            String pending = m.department.getPendingRequestId();
+            if (pending != null) {
+                // Recovery path, e.g. after a doctor.requested landed in a DLT.
+                // doctor-service treats the request id as an idempotency key.
+                entries.findById(pending).ifPresent(entry -> {
+                    log.info("Re-sending doctor.requested for request {}", pending);
+                    requestDoctor(entry);
+                });
+            }
+            return false; // if nothing is pending, mutate() calls the next patient itself
+        });
+        return getQueueStatus(departmentId);
+    }
+
+    // ───────────────────────────── queries ──────────────────────────────
+
     @Override
     public QueueStatusResponse getQueueStatus(String departmentId) {
-
-        log.debug("Getting queue status for: {}", departmentId);
-
-        List<QueueEntry> snapshot = queueManager.getQueueSnapshot(departmentId);
-
-        long totalWaiting = snapshot.stream()
-                .filter(e -> e.getStatus() == QueueStatus.WAITING)
-                .count();
-
-        long totalAssigned = queueRepository
-                .countByDepartmentIdAndStatus(departmentId, QueueStatus.ASSIGNED);
-
-        List<QueueEntryResponse> responses = snapshot.stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
-
-        return new QueueStatusResponse(
-                departmentId,
-                (int) totalWaiting,
-                (int) totalAssigned,
-                responses);
-    }
-
-    // ─────────────────────────────────────────
-    // GET PATIENT QUEUE INFO
-    // ─────────────────────────────────────────
-    @Override
-    public QueueEntryResponse getPatientQueueInfo(String patientId, String departmentId) {
-
-        Optional<Integer> position = queueManager.getPatientPosition(patientId, departmentId);
-
-        QueueEntry entry = queueRepository.findByPatientId(patientId)
-                .stream()
-                .filter(e -> e.getStatus() == QueueStatus.WAITING || e.getStatus() == QueueStatus.ASSIGNED)
-                .findFirst()
-                .orElseThrow(() -> new QueueEntryNotFoundException(patientId));
-
-        position.ifPresent(entry::setPosition);
-        return mapToResponse(entry);
-    }
-
-    // ─────────────────────────────────────────
-    // ASSIGN DOCTOR
-    // ─────────────────────────────────────────
-    @Override
-    @Transactional
-    public QueueEntryResponse assignDoctor(String patientId, AssignDoctorRequest request) {
-
-        log.info("Assigning doctor: {} to patient: {}", request.getDoctorName(), patientId);
-
-        QueueEntry entry = queueRepository.findByPatientId(patientId)
-                .stream()
-                .filter(e -> e.getStatus() == QueueStatus.WAITING || e.getStatus() == QueueStatus.ASSIGNED)
-                .findFirst()
-                .orElseThrow(() -> new QueueEntryNotFoundException(patientId));
-
-        entry.setAssignedDoctorId(request.getDoctorId());
-        entry.setAssignedDoctorName(request.getDoctorName());
-        entry.setRoomNumber(request.getRoomNumber());
-        entry.setStatus(QueueStatus.IN_CONSULTATION);
-
-        QueueEntry updated = queueRepository.save(entry);
-
-        // Publish doctor.assigned event to Kafka
-        queueEventProducer.publishDoctorAssigned(
-                updated.getPatientId(),
-                updated.getTokenNumber(),
-                request.getDoctorId(),
-                request.getDoctorName(),
-                updated.getDepartmentId(),
-                request.getRoomNumber()
-        );
-
-        log.info("doctor.assigned event published for patient: {} with Dr. {}",
-                patientId, request.getDoctorName());
-
-        return mapToResponse(updated);
-    }
-
-    // Private helper for automated assignment
-    private void tryAssignDoctorViaKafka(QueueEntry entry) {
-        try {
-            log.info("Finding doctor for patient: {}", entry.getPatientId());
-
-            Map doctor = doctorClient.findAndAssignDoctor(entry.getDepartmentId());
-
-            if (doctor != null) {
-                String doctorId = doctor.get("doctorId") != null
-                        ? doctor.get("doctorId").toString() : null;
-                String doctorName = doctor.get("name") != null
-                        ? doctor.get("name").toString() : "Unknown";
-                String roomNumber = doctor.get("roomNumber") != null
-                        ? doctor.get("roomNumber").toString() : "TBD";
-
-                if (doctorId == null) return;
-
-                AssignDoctorRequest req = new AssignDoctorRequest();
-                req.setDoctorId(doctorId);
-                req.setDoctorName(doctorName);
-                req.setRoomNumber(roomNumber);
-
-                assignDoctor(entry.getPatientId(), req);
-
-                log.info("Doctor {} auto-assigned via Kafka event to: {}",
-                        doctorName, entry.getPatientId());
-            } else {
-                log.warn("No doctor available for dept: {}", entry.getDepartmentId());
-            }
-        } catch (Exception e) {
-            log.warn("Auto doctor assignment failed: {}", e.getMessage());
+        DepartmentSnapshot snapshot = currentSnapshot(departmentId);
+        List<QueueEntryResponse> waiting = new ArrayList<>();
+        for (QueueItem item : snapshot.waiting()) {
+            int position = waiting.size() + 1;
+            waiting.add(new QueueEntryResponse(item.queueEntryId(), item.patientId(), item.patientName(),
+                    departmentId, item.tokenNumber(), item.priority(), QueueStatus.WAITING, position,
+                    estimatedWait(position), null, null, item.joinedAt()));
         }
-    }
-
-    // ─────────────────────────────────────────
-    // MARK DONE
-    // ─────────────────────────────────────────
-    @Override
-    @Transactional
-    public QueueEntryResponse markDone(String patientId, String departmentId) {
-
-        log.info("Marking done: patient: {} dept: {}", patientId, departmentId);
-
-        QueueEntry entry = queueRepository.findByPatientId(patientId)
+        List<QueueEntryResponse> active = entries
+                .findByDepartmentIdAndStatusInOrderByCalledAtAsc(departmentId, ACTIVE)
                 .stream()
-                .filter(e -> e.getStatus() == QueueStatus.IN_CONSULTATION)
-                .findFirst()
-                .orElseThrow(() -> new QueueEntryNotFoundException(patientId));
-
-        if (entry.getAssignedDoctorId() != null) {
-            doctorClient.freeDoctor(entry.getAssignedDoctorId());
-        }
-
-        entry.setStatus(QueueStatus.DONE);
-        QueueEntry updated = queueRepository.save(entry);
-
-        monitorClient.logEvent(
-                "CONSULTATION_DONE",
-                patientId,
-                departmentId,
-                "Consultation completed for patient: " + patientId
-        );
-
-        log.info("Consultation done for: {}", patientId);
-        return mapToResponse(updated);
+                .map(entry -> toResponse(entry, null))
+                .toList();
+        return new QueueStatusResponse(departmentId, snapshot.version(),
+                strategyFactory.forDepartment(departmentId).name(), waiting.size(), active.size(), waiting, active);
     }
 
-    // ─────────────────────────────────────────
-    // REMOVE FROM QUEUE
-    // ─────────────────────────────────────────
     @Override
-    @Transactional
-    public boolean removeFromQueue(String patientId, String departmentId) {
-
-        boolean removed = queueManager.removePatient(patientId, departmentId);
-
-        if (removed) {
-            queueRepository.findByPatientId(patientId)
-                    .stream()
-                    .filter(e -> e.getStatus() == QueueStatus.WAITING)
-                    .findFirst()
-                    .ifPresent(e -> {
-                        e.setStatus(QueueStatus.DONE);
-                        queueRepository.save(e);
-                    });
-
-            syncPositionsToDB(departmentId);
-
-            // Rebuild snapshot and publish to Kafka after removal
-            List<QueueUpdatedEvent.QueueEntrySnapshot> snapshots =
-                    queueManager.getQueueSnapshot(departmentId)
-                            .stream()
-                            .map(e -> new QueueUpdatedEvent.QueueEntrySnapshot(
-                                    e.getPatientId(),
-                                    e.getPatientName(),
-                                    e.getTokenNumber(),
-                                    e.getPosition() != null ? e.getPosition() : 0,
-                                    e.getPosition() != null ? (e.getPosition() - 1) * 5 : 0
-                            ))
-                            .collect(Collectors.toList());
-
-            String firstId = snapshots.isEmpty() ? null : snapshots.get(0).getPatientId();
-            String firstToken = snapshots.isEmpty() ? null : snapshots.get(0).getTokenNumber();
-
-            queueEventProducer.publishQueueUpdated(
-                    departmentId,
-                    snapshots.size(),
-                    firstId,
-                    firstToken,
-                    snapshots
-            );
-
-            log.info("queue.updated published after remove: dept={} remaining={}",
-                    departmentId, snapshots.size());
+    public QueueEntryResponse getPatientQueueInfo(String patientId) {
+        QueueEntry entry = entries.findByPatientId(patientId)
+                .orElseThrow(() -> new QueueEntryNotFoundException("No queue entry for patient " + patientId));
+        Integer position = null;
+        if (entry.getStatus() == QueueStatus.WAITING) {
+            position = currentSnapshot(entry.getDepartmentId()).positionOf(patientId).orElse(null);
         }
-
-        return removed;
+        return toResponse(entry, position);
     }
 
-    // ─────────────────────────────────────────
-    // GET ALL QUEUES
-    // ─────────────────────────────────────────
     @Override
     public List<QueueStatusResponse> getAllQueues() {
-        return queueRepository.findAll()
-                .stream()
-                .filter(e -> e.getStatus() == QueueStatus.WAITING)
-                .map(QueueEntry::getDepartmentId)
-                .distinct()
+        return departments.findAll().stream()
+                .map(QueueDepartment::getDepartmentId)
+                .sorted()
                 .map(this::getQueueStatus)
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    // Sync in-memory positions back to DB
-    private void syncPositionsToDB(String departmentId) {
-        List<QueueEntry> snapshot = queueManager.getQueueSnapshot(departmentId);
+    // ───────────────────────────── engine ───────────────────────────────
 
-        snapshot.forEach(entry ->
-                queueRepository.findById(entry.getQueueId())
-                        .ifPresent(db -> {
-                            db.setPosition(entry.getPosition());
-                            queueRepository.save(db);
-                        }));
+    /** Working state for one mutation; only used inside {@link #mutate}. */
+    private static final class Mutation {
+        private final QueueDepartment department;
+        private final List<QueueItem> waiting;
+
+        private Mutation(QueueDepartment department, List<QueueItem> waiting) {
+            this.department = department;
+            this.waiting = waiting;
+        }
     }
 
-    private int calculateEstimatedWait(int position) {
-        return (position - 1) * 5;
+    /**
+     * @param change applies the domain change; returns true if queue state changed
+     */
+    private void mutate(String departmentId, Predicate<Mutation> change) {
+        queueManager.withDepartmentLock(departmentId, () -> {
+            DepartmentSnapshot committed = transactionTemplate.execute(status -> {
+                departments.insertIfMissing(departmentId);
+                QueueDepartment department = departments.findForUpdate(departmentId)
+                        .orElseThrow(() -> new IllegalStateException("Department row missing: " + departmentId));
+
+                DepartmentSnapshot current = queueManager.snapshot(departmentId);
+                boolean memoryIsCurrent = current.version() == department.getStateVersion();
+                List<QueueItem> waiting = memoryIsCurrent
+                        ? new ArrayList<>(current.waiting())
+                        : loadWaiting(departmentId);
+
+                Mutation mutation = new Mutation(department, waiting);
+                boolean changed = change.test(mutation);
+
+                List<QueueItem> ordered = order(departmentId, mutation.waiting);
+                boolean dispatched = dispatchIfIdle(department, ordered);
+
+                if (!changed && !dispatched) {
+                    return memoryIsCurrent ? null : DepartmentSnapshot.of(department.getStateVersion(), ordered);
+                }
+                department.setStateVersion(department.getStateVersion() + 1);
+                department.setUpdatedAt(now());
+                DepartmentSnapshot next = DepartmentSnapshot.of(department.getStateVersion(), ordered);
+                publishQueueUpdated(departmentId, next);
+                return next;
+            });
+            // Only reached after a successful commit.
+            if (committed != null) {
+                queueManager.install(departmentId, committed);
+            }
+            return null;
+        });
     }
 
-    private QueueEntryResponse mapToResponse(QueueEntry entry) {
-        return new QueueEntryResponse(
-                entry.getQueueId(),
-                entry.getPatientId(),
-                entry.getPatientName(),
-                entry.getDepartmentId(),
-                entry.getTokenNumber(),
-                entry.getPosition(),
-                entry.getStatus(),
-                entry.getAssignedDoctorName(),
-                entry.getRoomNumber(),
-                entry.getJoinedAt(),
-                calculateEstimatedWait(entry.getPosition() != null ? entry.getPosition() : 0)
-        );
+    /**
+     * One outstanding doctor request per department: the head of the queue is called
+     * (AWAITING_DOCTOR) and doctor-service is asked for a doctor. The next patient is
+     * called when that request is answered or cancelled.
+     */
+    private boolean dispatchIfIdle(QueueDepartment department, List<QueueItem> ordered) {
+        if (department.getPendingRequestId() != null || ordered.isEmpty()) {
+            return false;
+        }
+        QueueItem head = ordered.remove(0);
+        QueueEntry entry = entries.findById(head.queueEntryId())
+                .orElseThrow(() -> new IllegalStateException("Queue entry missing: " + head.queueEntryId()));
+        entry.setStatus(QueueStatus.AWAITING_DOCTOR);
+        entry.setCalledAt(now());
+        department.setPendingRequestId(entry.getId());
+        requestDoctor(entry);
+        log.info("Called patient {} ({}) in {}; doctor requested", entry.getPatientId(), entry.getTokenNumber(),
+                entry.getDepartmentId());
+        return true;
+    }
+
+    private void requestDoctor(QueueEntry entry) {
+        String eventId = newEventId();
+        outbox.enqueue(KafkaTopics.DOCTOR_REQUESTED, entry.getDepartmentId(), eventId, new DoctorRequestedEvent(
+                eventId, entry.getId(), entry.getPatientId(), entry.getTokenNumber(), entry.getDepartmentId(),
+                entry.getPriority(), now()));
+    }
+
+    private void publishQueueUpdated(String departmentId, DepartmentSnapshot snapshot) {
+        List<QueueUpdatedEvent.WaitingEntry> waiting = new ArrayList<>();
+        for (QueueItem item : snapshot.waiting()) {
+            int position = waiting.size() + 1;
+            waiting.add(new QueueUpdatedEvent.WaitingEntry(item.queueEntryId(), item.patientId(),
+                    item.patientName(), item.tokenNumber(), item.accessCode(), item.priority(), position,
+                    estimatedWait(position), item.joinedAt()));
+        }
+        // Auto-flush makes this query see the changes made earlier in this transaction.
+        List<QueueUpdatedEvent.ActiveEntry> active = entries
+                .findByDepartmentIdAndStatusInOrderByCalledAtAsc(departmentId, ACTIVE)
+                .stream()
+                .map(entry -> new QueueUpdatedEvent.ActiveEntry(entry.getId(), entry.getPatientId(),
+                        entry.getPatientName(), entry.getTokenNumber(), entry.getAccessCode(),
+                        entry.getStatus().name(), entry.getDoctorName(), entry.getRoomNumber(), entry.getCalledAt()))
+                .toList();
+        String eventId = newEventId();
+        outbox.enqueue(KafkaTopics.QUEUE_UPDATED, departmentId, eventId, new QueueUpdatedEvent(
+                eventId, departmentId, snapshot.version(), strategyFactory.forDepartment(departmentId).name(),
+                waiting, active, now()));
+    }
+
+    /** Returns the committed snapshot, reloading from MySQL if another instance has moved the department on. */
+    private DepartmentSnapshot currentSnapshot(String departmentId) {
+        long databaseVersion = departments.findStateVersion(departmentId)
+                .orElseThrow(() -> new QueueEntryNotFoundException("Unknown department " + departmentId));
+        DepartmentSnapshot snapshot = queueManager.snapshot(departmentId);
+        if (snapshot.version() == databaseVersion) {
+            return snapshot;
+        }
+        return queueManager.withDepartmentLock(departmentId, () -> {
+            DepartmentSnapshot reloaded = transactionTemplate.execute(status -> {
+                QueueDepartment department = departments.findForUpdate(departmentId).orElseThrow();
+                DepartmentSnapshot current = queueManager.snapshot(departmentId);
+                if (current.version() == department.getStateVersion()) {
+                    return current;
+                }
+                return DepartmentSnapshot.of(department.getStateVersion(),
+                        order(departmentId, loadWaiting(departmentId)));
+            });
+            queueManager.install(departmentId, reloaded);
+            return reloaded;
+        });
+    }
+
+    private List<QueueItem> loadWaiting(String departmentId) {
+        return entries.findByDepartmentIdAndStatus(departmentId, QueueStatus.WAITING).stream()
+                .map(QueueServiceImpl::toItem)
+                .collect(Collectors.toCollection(ArrayList::new));
+    }
+
+    private List<QueueItem> order(String departmentId, List<QueueItem> items) {
+        List<QueueItem> ordered = new ArrayList<>(items);
+        ordered.sort(strategyFactory.forDepartment(departmentId).comparator(now()));
+        return ordered;
+    }
+
+    // ───────────────────────────── helpers ──────────────────────────────
+
+    private String departmentOfPatient(String patientId) {
+        return entries.findByPatientId(patientId)
+                .map(QueueEntry::getDepartmentId)
+                .orElseThrow(() -> new QueueEntryNotFoundException("No queue entry for patient " + patientId));
+    }
+
+    private int estimatedWait(int position) {
+        return (position - 1) * properties.avgConsultationMinutes();
+    }
+
+    private static QueueItem toItem(QueueEntry entry) {
+        return new QueueItem(entry.getId(), entry.getPatientId(), entry.getPatientName(), entry.getTokenNumber(),
+                entry.getTokenSequence(), entry.getCheckinDate(), entry.getPriority(), entry.getAccessCode(),
+                entry.getJoinedAt());
+    }
+
+    private QueueEntryResponse toResponse(QueueEntry entry, Integer position) {
+        return new QueueEntryResponse(entry.getId(), entry.getPatientId(), entry.getPatientName(),
+                entry.getDepartmentId(), entry.getTokenNumber(), entry.getPriority(), entry.getStatus(), position,
+                position == null ? null : estimatedWait(position), entry.getDoctorName(), entry.getRoomNumber(),
+                entry.getJoinedAt());
+    }
+
+    private void releaseDoctor(String requestId, String patientId, String doctorId,
+                               String departmentId, ReleaseReason reason) {
+        String eventId = newEventId();
+        outbox.enqueue(KafkaTopics.DOCTOR_RELEASED, departmentId, eventId, new DoctorReleasedEvent(
+                eventId, requestId, patientId, doctorId, departmentId, reason, now()));
+    }
+
+    private static String newEventId() {
+        return UUID.randomUUID().toString();
+    }
+
+    private Instant now() {
+        return Instant.now(clock);
+    }
+
+    private static void requireText(String value, String field) {
+        if (!StringUtils.hasText(value)) {
+            // Non-retryable: the event goes straight to the dead-letter topic.
+            throw new IllegalArgumentException("Event field '" + field + "' is required");
+        }
     }
 }
